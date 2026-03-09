@@ -83,15 +83,16 @@ border:1px solid #ccc;
 border-radius:6px;
 }
 
-.inputBar button{
-margin-left:10px;
+.inputBar{
+position:sticky;
+bottom:0;
+display:flex;
 padding:10px;
-border:none;
-background:#2563eb;
-color:white;
-border-radius:6px;
-cursor:pointer;
+background:white;
+border-top:1px solid #ddd;
+gap:10px;
 }
+
 
 .mirror{
 border-left:1px solid #ddd;
@@ -113,6 +114,7 @@ display:flex;
 gap:10px;
 align-items:center;
 }
+
 
 
 
