@@ -88,23 +88,23 @@ chat.scrollTop=chat.scrollHeight;
 
 async function loadUsers(){
 
-const res = await fetch(API_URL+"/users");
+const res = await fetch(API_URL + "/users");
 
 const users = await res.json();
 
 const list = document.getElementById("usersList");
 
-list.innerHTML="";
+list.innerHTML = "";
 
-users.forEach(u=>{
+users.forEach(u => {
 
-const div = document.createElement("div");
+const card = document.createElement("div");
+card.className = "userCard";
 
-div.className="userCard";
+card.onclick = () => loadMirror(u.name);
 
 const status = document.createElement("span");
-
-status.className="statusDot";
+status.className = "statusDot";
 
 if(u.online){
 status.classList.add("online");
@@ -112,22 +112,18 @@ status.classList.add("online");
 status.classList.add("offline");
 }
 
-div.appendChild(status);
-
 const name = document.createElement("span");
-name.innerText = " " + u.name;
+name.className = "userName";
+name.innerText = u.name;
 
-div.appendChild(name);
+card.appendChild(status);
+card.appendChild(name);
 
-div.onclick = ()=>loadMirror(u.name);
-
-list.appendChild(div);
+list.appendChild(card);
 
 });
 
 }
-
-
 
 
 async function loadMirror(user){
@@ -241,6 +237,7 @@ sendMessage();
 }
 
 });
+
 
 
 
