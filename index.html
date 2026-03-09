@@ -1,32 +1,47 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
+
 <meta charset="UTF-8">
-<title>Panel IA</title>
+<title>Agente IA</title>
+
 <link rel="stylesheet" href="style.css">
+
 </head>
 
 <body>
 
-<div class="container">
+<div class="app">
 
-<h1>Agente IA</h1>
+<header class="topbar">
+
+<h1>🤖 Agente IA</h1>
 
 <div class="controls">
 
 <textarea id="personality" placeholder="Personalidad del bot"></textarea>
+
 <button onclick="setPersonality()">Guardar personalidad</button>
 
+<label class="fileBtn">
+Seleccionar archivo
 <input type="file" id="fileInput">
+</label>
+
 <button onclick="uploadFile()">Subir archivo</button>
 
 </div>
 
+</header>
+
 <div id="chat"></div>
 
-<div class="messageBox">
-<input type="text" id="message" placeholder="Escribí un mensaje">
+<div class="inputBar">
+
+<input id="message" placeholder="Escribí un mensaje...">
+
 <button onclick="sendMessage()">Enviar</button>
+
 </div>
 
 </div>
@@ -35,3 +50,5 @@
 
 </body>
 </html>
+
+
