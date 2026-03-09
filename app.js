@@ -100,15 +100,33 @@ users.forEach(u=>{
 
 const div = document.createElement("div");
 
-div.innerText=u;
+div.className="userCard";
 
-div.onclick=()=>loadMirror(u);
+const status = document.createElement("span");
+
+status.className="statusDot";
+
+if(u.online){
+status.classList.add("online");
+}else{
+status.classList.add("offline");
+}
+
+div.appendChild(status);
+
+const name = document.createElement("span");
+name.innerText = " " + u.name;
+
+div.appendChild(name);
+
+div.onclick = ()=>loadMirror(u.name);
 
 list.appendChild(div);
 
 });
 
 }
+
 
 
 
@@ -209,6 +227,7 @@ body:formData
 alert("Archivo subido");
 
 }
+
 
 
 
