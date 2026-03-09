@@ -228,6 +228,20 @@ alert("Archivo subido");
 
 }
 
+const messageInput = document.getElementById("message");
+
+messageInput.addEventListener("keydown", function(event){
+
+if(event.key === "Enter" && !event.shiftKey){
+
+event.preventDefault();
+
+sendMessage();
+
+}
+
+});
+
 
 
 
