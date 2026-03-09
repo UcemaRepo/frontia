@@ -32,7 +32,10 @@ div.innerText = text;
 
 chat.appendChild(div);
 
+chat.scrollTop = chat.scrollHeight;
+
 }
+
 
 async function setPersonality(){
 
@@ -67,3 +70,4 @@ body:form
 alert("Archivo subido");
 
 }
+
