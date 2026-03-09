@@ -47,8 +47,10 @@ headers:{
 
 body:JSON.stringify({
 message:message,
-user:username
+user:username,
+personality: document.getElementById("personality").value
 })
+
 
 });
 
@@ -159,4 +161,25 @@ method:"DELETE"
 document.getElementById("chat").innerHTML="";
 
 }
+
+async function uploadFile(){
+
+const fileInput = document.getElementById("fileUpload");
+
+if(!fileInput.files.length) return;
+
+const formData = new FormData();
+
+formData.append("file", fileInput.files[0]);
+formData.append("user", username);
+
+await fetch(API_URL+"/upload",{
+method:"POST",
+body:formData
+});
+
+alert("Archivo subido");
+
+}
+
 
