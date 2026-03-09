@@ -132,6 +132,36 @@ gap:10px;
 align-items:center;
 }
 
+.userCard{
+display:flex;
+align-items:center;
+padding:10px;
+border-radius:8px;
+cursor:pointer;
+margin-bottom:5px;
+transition:background 0.2s;
+}
+
+.userCard:hover{
+background:#f0f3f7;
+}
+
+.statusDot{
+width:10px;
+height:10px;
+border-radius:50%;
+display:inline-block;
+margin-right:8px;
+}
+
+.online{
+background:#22c55e;
+}
+
+.offline{
+background:#9ca3af;
+}
+
 
 
 
