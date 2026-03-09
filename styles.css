@@ -11,14 +11,15 @@ overflow:hidden;
 display:grid;
 grid-template-columns:200px 1fr 300px;
 height:100vh;
+overflow:hidden;
 }
+
 
 .users{
 background:white;
 border-right:1px solid #ddd;
 padding:10px;
 overflow-y:auto;
-height:100vh;
 }
 
 
@@ -35,7 +36,10 @@ background:#eee;
 .chatSection{
 display:flex;
 flex-direction:column;
+height:100%;
+min-height:0;
 }
+
 
 .chatHeader{
 padding:15px;
@@ -50,7 +54,9 @@ padding:20px;
 display:flex;
 flex-direction:column;
 gap:10px;
+min-height:0;
 }
+
 
 
 
@@ -81,7 +87,9 @@ display:flex;
 padding:10px;
 background:white;
 border-top:1px solid #ddd;
+gap:10px;
 }
+
 
 #message{
 flex:1;
@@ -106,8 +114,8 @@ border-left:1px solid #ddd;
 background:#fafafa;
 padding:15px;
 overflow-y:auto;
-height:100vh;
 }
+
 
 
 #mirrorChat{
@@ -123,6 +131,7 @@ display:flex;
 gap:10px;
 align-items:center;
 }
+
 
 
 
