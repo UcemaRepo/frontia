@@ -1,5 +1,9 @@
 const API_URL = "https://backendia-khz7.onrender.com";
 
+let mirrorHistory = [];
+let mirrorUser = null;
+
+
 let username = localStorage.getItem("username");
 
 if(!username){
@@ -110,9 +114,13 @@ list.appendChild(div);
 
 async function loadMirror(user){
 
+mirrorUser = user;
+
 const res = await fetch(API_URL+"/history/"+user);
 
 const history = await res.json();
+
+mirrorHistory = history;
 
 const mirror = document.getElementById("mirrorChat");
 
@@ -132,6 +140,26 @@ mirror.appendChild(a);
 });
 
 }
+
+function joinChat(){
+
+if(!mirrorHistory.length) return;
+
+const chat = document.getElementById("chat");
+
+chat.innerHTML="";
+
+mirrorHistory.forEach(m=>{
+
+addMessage("user",m.message);
+addMessage("bot",m.reply);
+
+});
+
+alert("Ahora continuás este chat desde tu usuario");
+
+}
+
 
 
 
@@ -181,5 +209,6 @@ body:formData
 alert("Archivo subido");
 
 }
+
 
 
