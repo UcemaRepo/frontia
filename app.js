@@ -337,14 +337,15 @@ function stopMirrorPolling() {
 
 // ── Salas ──────────────────────────────────────────────────────────────
 async function loadRooms() {
-  const res   = await fetch(API_URL + "/rooms");
-  const rooms = await res.json();
+  try {
+    const res   = await fetch(API_URL + "/rooms");
+    const rooms = await res.json();
 
-  const list  = document.getElementById("roomsList");
-  const empty = document.getElementById("roomsEmpty");
+    const list  = document.getElementById("roomsList");
+    const empty = document.getElementById("roomsEmpty");
+    if (!list) return;  // DOM todavía no listo
 
-  // Mantener solo las rooms que no están abiertas como ventanas
-  list.innerHTML = "";
+    list.innerHTML = "";
 
   if (!rooms.length) {
     if (empty) empty.style.display = "flex";
@@ -368,6 +369,7 @@ async function loadRooms() {
     card.appendChild(dot); card.appendChild(info);
     list.appendChild(card);
   });
+  } catch (_) {}
 }
 
 function showRoomNotification(roomId, roomName, creator) {
