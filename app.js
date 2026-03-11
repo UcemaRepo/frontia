@@ -355,14 +355,15 @@ async function loadMirror(user) {
 
       const a = document.createElement("div");
       a.className = "mirror-msg-bot";
-      a.innerText = m.reply;
+      renderRichInto(a, m.reply);   // rich rendering completo
 
       mirror.appendChild(q); mirror.appendChild(a);
     });
     mirror.scrollTop = mirror.scrollHeight;
   }
 
-  document.getElementById("mirrorBtnJoin").style.display = "inline-flex";
+  document.getElementById("mirrorBtnJoin").style.display   = "inline-flex";
+  document.getElementById("mirrorBtnExpand").style.display = "inline-flex";
   mirrorMsgCount = history.length;
 
   // Arrancar polling pasivo: actualiza el espejo sin que el usuario se haya unido
@@ -389,16 +390,15 @@ function startMirrorPolling(user) {
       newItems.forEach(m => {
         const actor = m.actor || user;
         const q = document.createElement("div");
-        q.className = "mirror-msg-user";
+        q.className = "mirror-msg-user mirror-new";
         q.innerText = (actor !== user ? "[" + actor + "] " : "") + m.message;
+
         const a = document.createElement("div");
-        a.className = "mirror-msg-bot";
-        a.innerText = m.reply;
+        a.className = "mirror-msg-bot mirror-new";
+        renderRichInto(a, m.reply);   // rich rendering también en el espejo pasivo
+
         mirror.appendChild(q);
         mirror.appendChild(a);
-        // Pulso visual para indicar actividad nueva
-        q.classList.add("mirror-new");
-        a.classList.add("mirror-new");
       });
       mirror.scrollTop = mirror.scrollHeight;
     } catch (_) {}
@@ -537,8 +537,9 @@ function populateSharedChat(history, owner) {
 
 function appendSharedMessage(actor, message, reply) {
   const container = document.getElementById("mirrorChat");
-  const isMe = actor === username;
+  const isMe      = actor === username;
 
+  // Burbuja del usuario
   const wrap = document.createElement("div");
   wrap.className = "shared-msg-wrap " + (isMe ? "mine" : "theirs");
 
@@ -553,14 +554,33 @@ function appendSharedMessage(actor, message, reply) {
   bubble.className = "shared-msg-bubble " + (isMe ? "mine" : "theirs");
   bubble.innerText = message;
   wrap.appendChild(bubble);
-
-  const botBubble = document.createElement("div");
-  botBubble.className = "shared-msg-bot";
-  botBubble.innerText = reply;
-
   container.appendChild(wrap);
-  container.appendChild(botBubble);
+
+  // Respuesta del bot con rich rendering completo
+  const botWrap = document.createElement("div");
+  botWrap.className = "shared-msg-bot-wrap";
+  renderRichInto(botWrap, reply);
+  container.appendChild(botWrap);
+
   container.scrollTop = container.scrollHeight;
+}
+
+// Renderiza rich content (tablas, widgets, downloads) dentro de cualquier contenedor
+function renderRichInto(container, raw) {
+  parseRichContent(raw).forEach(part => {
+    if (part.type === "text" && part.content.trim()) {
+      const p = document.createElement("p");
+      p.className = "shared-bot-text";
+      p.innerText = part.content.trim();
+      container.appendChild(p);
+    } else if (part.type === "table") {
+      container.appendChild(renderTable(part.content));
+    } else if (part.type === "widget") {
+      container.appendChild(renderWidget(part.title, part.content));
+    } else if (part.type === "download") {
+      container.appendChild(renderDownload(part.filename, part.content));
+    }
+  });
 }
 
 function appendSharedEvent(text) {
@@ -645,6 +665,100 @@ async function uploadFile() {
   const res = await fetch(API_URL + "/upload", { method: "POST", body: formData });
   if (res.ok) document.getElementById("fileName").innerText = "✓ " + fileInput.files[0].name;
   else alert("Tipo de archivo no soportado");
+}
+
+// ── Pantalla extendida (expanded view) ───────────────
+let expandedUser = null;
+
+function openExpandedView(user) {
+  expandedUser = user || mirrorUser;
+  if (!expandedUser) return;
+
+  // Crear overlay
+  const overlay = document.createElement("div");
+  overlay.id        = "expandedOverlay";
+  overlay.className = "expanded-overlay";
+  overlay.onclick   = (e) => { if (e.target === overlay) closeExpandedView(); };
+
+  overlay.innerHTML = `
+    <div class="expanded-panel">
+      <div class="expanded-header">
+        <div class="expanded-title">
+          <span class="panel-label">VISTA EXTENDIDA · ${expandedUser.toUpperCase()}</span>
+        </div>
+        <div class="expanded-actions">
+          <button class="btn-icon" onclick="refreshExpandedView()" title="Actualizar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
+          <button class="btn-ghost" onclick="closeExpandedView()" title="Cerrar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="expanded-messages" id="expandedMessages"></div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  loadExpandedHistory(expandedUser);
+
+  // Polling de actualización automática mientras está abierto
+  overlay._pollTimer = setInterval(() => refreshExpandedView(), 3000);
+
+  // Animación de entrada
+  requestAnimationFrame(() => overlay.classList.add("open"));
+}
+
+async function loadExpandedHistory(user) {
+  const res     = await fetch(API_URL + "/history/" + user);
+  const history = await res.json();
+  const container = document.getElementById("expandedMessages");
+  if (!container) return;
+  container.innerHTML = "";
+
+  if (!history.length) {
+    container.innerHTML = '<div class="expanded-empty">Sin mensajes aún</div>';
+    return;
+  }
+
+  history.forEach(m => {
+    const actor = m.actor || user;
+
+    const userDiv = document.createElement("div");
+    userDiv.className = "expanded-user-msg";
+    if (actor !== user) {
+      const label = document.createElement("span");
+      label.className = "expanded-actor";
+      label.innerText = actor;
+      userDiv.appendChild(label);
+    }
+    const bubble = document.createElement("div");
+    bubble.className = "expanded-bubble";
+    bubble.innerText = m.message;
+    userDiv.appendChild(bubble);
+
+    const botDiv = document.createElement("div");
+    botDiv.className = "expanded-bot-msg";
+    renderRichInto(botDiv, m.reply);
+
+    container.appendChild(userDiv);
+    container.appendChild(botDiv);
+  });
+
+  container.scrollTop = container.scrollHeight;
+}
+
+async function refreshExpandedView() {
+  if (expandedUser) await loadExpandedHistory(expandedUser);
+}
+
+function closeExpandedView() {
+  const overlay = document.getElementById("expandedOverlay");
+  if (!overlay) return;
+  if (overlay._pollTimer) clearInterval(overlay._pollTimer);
+  overlay.classList.remove("open");
+  setTimeout(() => overlay.remove(), 250);
+  expandedUser = null;
 }
 
 // ── Modal de personalidad ──────────────────────────────
