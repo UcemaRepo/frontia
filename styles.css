@@ -629,68 +629,90 @@ body {
   gap: 6px;
   padding: 32px 0 28px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 20px;
+  margin-bottom: 8px;
 }
-
 .dm-start-avatar {
   width: 64px; height: 64px;
   border-radius: 50%;
   background: var(--user-bubble);
   display: flex; align-items: center; justify-content: center;
-  font-family: var(--font-head);
-  font-size: 26px; font-weight: 700;
-  color: white;
-  margin-bottom: 4px;
+  font-family: var(--font-head); font-size: 26px; font-weight: 700;
+  color: white; margin-bottom: 4px;
 }
-
 .dm-start-name {
   font-family: var(--font-head);
-  font-size: 22px; font-weight: 700;
-  color: var(--text);
+  font-size: 22px; font-weight: 700; color: var(--text);
 }
+.dm-start-sub { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
 
-.dm-start-sub {
-  font-size: 13px;
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-
-/* Mensajes del DM */
-.dm-msg {
+/* ── Grupos de mensajes ── */
+.dm-group {
   display: flex;
-  flex-direction: column;
-  max-width: 68%;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 12px;
   animation: fadeUp 0.15s ease;
+}
+.dm-group-mine   { flex-direction: row-reverse; }
+.dm-group-theirs { flex-direction: row; }
+
+.dm-group-avatar {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-head); font-size: 13px; font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  align-self: flex-end;
   margin-bottom: 2px;
 }
-.dm-mine   { align-self: flex-end; align-items: flex-end; }
-.dm-theirs { align-self: flex-start; align-items: flex-start; margin-bottom: 6px; }
+
+.dm-group-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 65%;
+}
+.dm-group-mine .dm-group-inner   { align-items: flex-end; }
+.dm-group-theirs .dm-group-inner { align-items: flex-start; }
 
 .dm-sender {
   font-size: 10px; font-weight: 700;
-  color: var(--accent);
-  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  padding: 0 3px 2px;
+  padding: 0 4px 1px;
 }
 
+/* Burbujas de diálogo con cola */
 .dm-bubble {
-  padding: 9px 14px;
-  border-radius: 14px;
+  position: relative;
+  padding: 9px 13px;
   font-size: 14px;
   line-height: 1.55;
   word-break: break-word;
+  max-width: 100%;
 }
 
+/* Primera burbuja del grupo — tiene cola */
 .dm-bubble-mine {
   background: var(--user-bubble);
   color: white;
-  border-bottom-right-radius: 4px;
+  border-radius: 18px 18px 4px 18px;
 }
-
 .dm-bubble-theirs {
   background: var(--surface2);
   border: 1px solid var(--border);
   color: var(--text);
-  border-bottom-left-radius: 4px;
+  border-radius: 18px 18px 18px 4px;
 }
+
+/* Burbujas apiladas en mismo grupo — sin cola */
+.dm-bubble-stacked.dm-bubble-mine   { border-radius: 18px 4px 4px 18px; }
+.dm-bubble-stacked.dm-bubble-theirs { border-radius: 4px 18px 18px 4px; }
+
+/* Última burbuja del grupo — recupera cola */
+.dm-group-mine .dm-group-inner .dm-bubble-mine:last-child     { border-radius: 18px 4px 4px 18px; }
+.dm-group-theirs .dm-group-inner .dm-bubble-theirs:last-child { border-radius: 4px 18px 18px 4px; }
