@@ -737,9 +737,36 @@ body {
 
 .btn-secondary:hover { border-color: var(--danger); color: var(--danger); }
 
+/* ─── Banner de chat heredado ─── */
+.join-banner {
+  align-self: stretch;
+  background: rgba(124,92,252,0.12);
+  border: 1px solid rgba(124,92,252,0.35);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #b09fff;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 
+.join-banner strong { color: #d0c0ff; }
 
+.join-banner button {
+  background: transparent;
+  border: 1px solid rgba(124,92,252,0.4);
+  color: #b09fff;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  cursor: pointer;
+  margin-left: auto;
+  transition: all 0.15s;
+}
 
-
-
-
+.join-banner button:hover {
+  background: rgba(124,92,252,0.2);
+  color: white;
+}
