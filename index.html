@@ -12,13 +12,29 @@
 
 <div class="layout">
 
-  <!-- Sidebar usuarios -->
+  <!-- Sidebar -->
   <aside class="users-panel">
+
+    <!-- Usuarios -->
     <div class="panel-header">
       <span class="panel-label">USUARIOS</span>
       <span class="online-badge" id="onlineCount">0 en línea</span>
     </div>
     <div id="usersList"></div>
+
+    <!-- Salas efímeras -->
+    <div class="panel-header rooms-header">
+      <span class="panel-label">SALAS</span>
+      <button class="btn-new-room" onclick="openCreateRoomModal()" title="Nueva sala">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+    </div>
+    <div id="roomsList">
+      <div class="rooms-empty" id="roomsEmpty">
+        <span>Sin salas activas</span>
+      </div>
+    </div>
+
   </aside>
 
   <!-- Chat principal -->
@@ -72,13 +88,12 @@
 
   <!-- Panel espejo -->
   <aside class="mirror-panel">
-    <div class="panel-header">
+    <div class="panel-header" id="mirrorPanelHeader">
       <span class="panel-label">VISTA ESPEJO</span>
       <div style="display:flex;gap:6px;align-items:center;">
         <button class="btn-expand" id="mirrorBtnExpand" style="display:none" onclick="openExpandedView()" title="Pantalla extendida">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
         </button>
-        <button class="btn-join" id="mirrorBtnJoin" style="display:none" onclick="joinChat()">Unirme</button>
       </div>
     </div>
     <div class="mirror-empty" id="mirrorEmpty">
@@ -88,6 +103,29 @@
     <div id="mirrorChat"></div>
   </aside>
 
+</div>
+
+<!-- Ventanas de salas (se insertan dinámicamente) -->
+<div id="roomWindows"></div>
+
+<!-- Modal crear sala -->
+<div class="modal-overlay" id="createRoomModal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <span class="modal-title">Nueva sala compartida</span>
+      <button class="modal-close" onclick="closeCreateRoomModal()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-desc">La sala existe mientras haya alguien conectado. Al salir el último participante, desaparece.</p>
+      <input type="text" id="roomNameInput" class="room-name-input" placeholder="Nombre de la sala..." maxlength="40">
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeCreateRoomModal()">Cancelar</button>
+      <button class="btn-primary" onclick="createRoom()">Crear sala</button>
+    </div>
+  </div>
 </div>
 
 <!-- Modal personalidad -->
@@ -100,7 +138,7 @@
       </button>
     </div>
     <div class="modal-body">
-      <p class="modal-desc">Escribí una personalidad completamente personalizada. Cuando esté definida, el selector usará esta en lugar del preset.</p>
+      <p class="modal-desc">Escribí una personalidad personalizada. Cuando esté definida, el selector usará esta en lugar del preset.</p>
       <textarea id="customPersonality" class="personality-editor" placeholder="Ej: Sos un asistente especializado en marketing digital..."></textarea>
       <div class="modal-presets">
         <span class="modal-preset-label">O cargá un preset como base:</span>
