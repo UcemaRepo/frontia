@@ -2,25 +2,57 @@ const API_URL = "https://backendia-khz7.onrender.com";
 
 let mirrorHistory = [];
 let mirrorUser = null;
+let lastActivityTime = Date.now();
 
+// ── Usuario ────────────────────────────────────────────
 let username = localStorage.getItem("username");
-
 if (!username) {
   username = prompt("Ingresá tu nombre");
   localStorage.setItem("username", username);
 }
-
 document.getElementById("username").innerText = username;
 
+// ── Init ───────────────────────────────────────────────
 loadUsers();
 loadMyHistory();
+loadPersonalityModal();
+
+// Heartbeat cada 20 segundos
+setInterval(sendHeartbeat, 20000);
+// Actualizar lista de usuarios cada 5 segundos
 setInterval(loadUsers, 5000);
 
-// Auto-resize textarea
+// ── Actividad del usuario ──────────────────────────────
+["mousemove", "keydown", "click", "scroll"].forEach(evt =>
+  document.addEventListener(evt, () => { lastActivityTime = Date.now(); })
+);
+
+function isUserActive() {
+  return (Date.now() - lastActivityTime) < 300000; // 5 minutos
+}
+
+async function sendHeartbeat() {
+  await fetch(API_URL + "/heartbeat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user: username, active: isUserActive() })
+  }).catch(() => {});
+}
+
+// Marcar offline al cerrar la pestaña
+window.addEventListener("beforeunload", () => {
+  navigator.sendBeacon(
+    API_URL + "/offline",
+    JSON.stringify({ user: username })
+  );
+});
+
+// ── Auto-resize textarea ───────────────────────────────
 const messageInput = document.getElementById("message");
 messageInput.addEventListener("input", function () {
   this.style.height = "auto";
   this.style.height = Math.min(this.scrollHeight, 120) + "px";
+  lastActivityTime = Date.now();
 });
 
 messageInput.addEventListener("keydown", function (event) {
@@ -30,32 +62,32 @@ messageInput.addEventListener("keydown", function (event) {
   }
 });
 
-// Mostrar nombre del archivo seleccionado
 document.getElementById("fileUpload").addEventListener("change", function () {
   const name = this.files[0]?.name || "Sin archivo";
   document.getElementById("fileName").innerText = name;
 });
 
+// ── Enviar mensaje ─────────────────────────────────────
 async function sendMessage() {
   const input = document.getElementById("message");
   const message = input.value.trim();
   if (!message) return;
 
+  lastActivityTime = Date.now();
   addMessage("user", message);
   input.value = "";
   input.style.height = "auto";
 
   const loader = document.createElement("div");
-  loader.className = "loader message";
-  loader.innerText = "IA escribiendo...";
+  loader.className = "loader";
   document.getElementById("chat").appendChild(loader);
-  document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
+  document.getElementById("chat").scrollTop = 99999;
 
   const res = await fetch(API_URL + "/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      message: message,
+      message,
       user: username,
       personality: document.getElementById("personality").value
     })
@@ -63,9 +95,10 @@ async function sendMessage() {
 
   const data = await res.json();
   loader.remove();
-  addMessage("bot", data.reply);
+  renderBotMessage(data.reply);
 }
 
+// ── Renderizado de mensajes ────────────────────────────
 function addMessage(type, text) {
   const chat = document.getElementById("chat");
   const div = document.createElement("div");
@@ -75,6 +108,136 @@ function addMessage(type, text) {
   chat.scrollTop = chat.scrollHeight;
 }
 
+function renderBotMessage(raw) {
+  const chat = document.getElementById("chat");
+  const container = document.createElement("div");
+  container.className = "message bot";
+
+  const parts = parseRichContent(raw);
+
+  parts.forEach(part => {
+    if (part.type === "text") {
+      if (part.content.trim()) {
+        const p = document.createElement("p");
+        p.className = "bot-text";
+        p.innerText = part.content.trim();
+        container.appendChild(p);
+      }
+    } else if (part.type === "table") {
+      container.appendChild(renderTable(part.content));
+    } else if (part.type === "widget") {
+      container.appendChild(renderWidget(part.title, part.content));
+    } else if (part.type === "download") {
+      container.appendChild(renderDownload(part.filename, part.content));
+    }
+  });
+
+  chat.appendChild(container);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function parseRichContent(raw) {
+  const parts = [];
+  // Regex que captura <table>, <widget title="...">, <download filename="...">
+  const regex = /<table>([\s\S]*?)<\/table>|<widget title="([^"]*)">([\s\S]*?)<\/widget>|<download filename="([^"]*)">([\s\S]*?)<\/download>/g;
+
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(raw)) !== null) {
+    // Texto antes del tag
+    if (match.index > lastIndex) {
+      parts.push({ type: "text", content: raw.slice(lastIndex, match.index) });
+    }
+
+    if (match[1] !== undefined) {
+      parts.push({ type: "table", content: match[1].trim() });
+    } else if (match[2] !== undefined) {
+      parts.push({ type: "widget", title: match[2], content: match[3].trim() });
+    } else if (match[4] !== undefined) {
+      parts.push({ type: "download", filename: match[4], content: match[5] });
+    }
+
+    lastIndex = regex.lastIndex;
+  }
+
+  // Texto restante
+  if (lastIndex < raw.length) {
+    parts.push({ type: "text", content: raw.slice(lastIndex) });
+  }
+
+  return parts;
+}
+
+function renderTable(raw) {
+  const lines = raw.split("\n").filter(l => l.trim());
+  const wrapper = document.createElement("div");
+  wrapper.className = "rich-table-wrap";
+
+  const table = document.createElement("table");
+  table.className = "rich-table";
+
+  lines.forEach((line, i) => {
+    const row = document.createElement("tr");
+    const cells = line.split("|").map(c => c.trim());
+    cells.forEach(cell => {
+      const td = document.createElement(i === 0 ? "th" : "td");
+      td.innerText = cell;
+      row.appendChild(td);
+    });
+    table.appendChild(row);
+  });
+
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function renderWidget(title, content) {
+  const div = document.createElement("div");
+  div.className = "rich-widget";
+  div.innerHTML = `<div class="widget-title">${title}</div><div class="widget-body">${content}</div>`;
+  return div;
+}
+
+function renderDownload(filename, content) {
+  const div = document.createElement("div");
+  div.className = "rich-download";
+
+  const blob = new Blob([content], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const sizeKB = (blob.size / 1024).toFixed(1);
+
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("width", "14"); svg.setAttribute("height", "14");
+  svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "2");
+  const p1 = document.createElementNS(svgNS, "path");
+  p1.setAttribute("d", "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4");
+  const p2 = document.createElementNS(svgNS, "polyline");
+  p2.setAttribute("points", "7,10 12,15 17,10");
+  const p3 = document.createElementNS(svgNS, "line");
+  p3.setAttribute("x1", "12"); p3.setAttribute("y1", "15");
+  p3.setAttribute("x2", "12"); p3.setAttribute("y2", "3");
+  svg.appendChild(p1); svg.appendChild(p2); svg.appendChild(p3);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.className = "download-link";
+  link.innerText = filename;
+
+  const size = document.createElement("span");
+  size.className = "download-size";
+  size.innerText = sizeKB + " KB";
+
+  div.appendChild(svg);
+  div.appendChild(link);
+  div.appendChild(size);
+  return div;
+}
+
+// ── Usuarios ───────────────────────────────────────────
 async function loadUsers() {
   const res = await fetch(API_URL + "/users");
   const users = await res.json();
@@ -82,27 +245,38 @@ async function loadUsers() {
   const list = document.getElementById("usersList");
   list.innerHTML = "";
 
-  const onlineCount = users.filter(u => u.online).length;
+  const onlineCount = users.filter(u => u.status === "online").length;
   document.getElementById("onlineCount").innerText = onlineCount + " en línea";
+
+  // Ordenar: online → away → offline
+  const order = { online: 0, away: 1, offline: 2 };
+  users.sort((a, b) => order[a.status] - order[b.status]);
 
   users.forEach(u => {
     const card = document.createElement("div");
     card.className = "userCard" + (u.name === mirrorUser ? " active" : "");
     card.onclick = () => loadMirror(u.name);
 
-    const status = document.createElement("span");
-    status.className = "statusDot " + (u.online ? "online" : "offline");
+    const dot = document.createElement("span");
+    dot.className = `statusDot ${u.status}`;
+    dot.title = u.status === "online" ? "En línea" : u.status === "away" ? "Ausente" : "Desconectado";
 
     const name = document.createElement("span");
     name.className = "userName";
     name.innerText = u.name;
 
-    card.appendChild(status);
+    const badge = document.createElement("span");
+    badge.className = `status-badge ${u.status}`;
+    badge.innerText = u.status === "online" ? "online" : u.status === "away" ? "ausente" : "offline";
+
+    card.appendChild(dot);
     card.appendChild(name);
+    card.appendChild(badge);
     list.appendChild(card);
   });
 }
 
+// ── Mirror ─────────────────────────────────────────────
 async function loadMirror(user) {
   mirrorUser = user;
 
@@ -118,7 +292,6 @@ async function loadMirror(user) {
     empty.style.display = "flex";
     return;
   }
-
   empty.style.display = "none";
 
   history.forEach(m => {
@@ -135,42 +308,36 @@ async function loadMirror(user) {
   });
 
   mirror.scrollTop = mirror.scrollHeight;
-
-  // Marcar activo en la lista
   loadUsers();
 }
 
 function joinChat() {
   if (!mirrorHistory.length) return;
-
   const chat = document.getElementById("chat");
   chat.innerHTML = "";
-
   mirrorHistory.forEach(m => {
     addMessage("user", m.message);
-    addMessage("bot", m.reply);
+    renderBotMessage(m.reply);
   });
-
   alert("Ahora continuás este chat desde tu usuario");
 }
 
 async function loadMyHistory() {
   const res = await fetch(API_URL + "/history/" + username);
   const history = await res.json();
-
   history.forEach(m => {
     addMessage("user", m.message);
-    addMessage("bot", m.reply);
+    renderBotMessage(m.reply);
   });
 }
 
 async function deleteMyChat() {
   if (!confirm("¿Borrar todo el historial?")) return;
-
   await fetch(API_URL + "/delete/" + username, { method: "DELETE" });
   document.getElementById("chat").innerHTML = "";
 }
 
+// ── Upload ─────────────────────────────────────────────
 async function uploadFile() {
   const fileInput = document.getElementById("fileUpload");
   if (!fileInput.files.length) return;
@@ -179,10 +346,7 @@ async function uploadFile() {
   formData.append("file", fileInput.files[0]);
   formData.append("user", username);
 
-  const res = await fetch(API_URL + "/upload", {
-    method: "POST",
-    body: formData
-  });
+  const res = await fetch(API_URL + "/upload", { method: "POST", body: formData });
 
   if (res.ok) {
     document.getElementById("fileName").innerText = "✓ " + fileInput.files[0].name;
@@ -191,6 +355,70 @@ async function uploadFile() {
   }
 }
 
+// ── Modal de personalidad ──────────────────────────────
+const PRESET_LABELS = {
+  normal:   "Normal",
+  analyst:  "Analista",
+  creative: "Creativo",
+  strict:   "Estricto",
+  dev:      "Dev",
+  coach:    "Coach"
+};
+
+async function loadPersonalityModal() {
+  const res = await fetch(API_URL + "/personality/" + username);
+  const data = await res.json();
+
+  document.getElementById("customPersonality").value = data.custom || "";
+
+  // Cargar chips de presets
+  const chips = document.getElementById("presetChips");
+  chips.innerHTML = "";
+  Object.entries(data.presets).forEach(([key, text]) => {
+    const chip = document.createElement("button");
+    chip.className = "preset-chip";
+    chip.innerText = PRESET_LABELS[key] || key;
+    chip.onclick = () => {
+      document.getElementById("customPersonality").value = text;
+    };
+    chips.appendChild(chip);
+  });
+}
+
+function openPersonalityModal() {
+  document.getElementById("personalityModal").classList.add("open");
+  loadPersonalityModal();
+}
+
+function closePersonalityModal() {
+  document.getElementById("personalityModal").classList.remove("open");
+}
+
+async function savePersonality() {
+  const custom = document.getElementById("customPersonality").value.trim();
+  await fetch(API_URL + "/personality/" + username, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ custom })
+  });
+
+  // Si hay personalidad custom, forzar "custom" en el selector
+  if (custom) {
+    document.getElementById("personality").value = "custom";
+  }
+
+  closePersonalityModal();
+}
+
+async function clearPersonality() {
+  document.getElementById("customPersonality").value = "";
+  await fetch(API_URL + "/personality/" + username, { method: "DELETE" });
+}
+
+// Cerrar modal con click fuera
+document.getElementById("personalityModal").addEventListener("click", function(e) {
+  if (e.target === this) closePersonalityModal();
+});
 
 
 
