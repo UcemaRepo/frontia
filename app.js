@@ -200,10 +200,43 @@ function renderWidget(title, content) {
   return div;
 }
 
+function getMimeType(filename) {
+  const ext = filename.split(".").pop().toLowerCase();
+  const types = {
+    "txt":  "text/plain",
+    "csv":  "text/csv",
+    "md":   "text/markdown",
+    "json": "application/json",
+    "html": "text/html",
+    "xml":  "application/xml",
+    // Word/Excel/PowerPoint: NO se generan como texto — forzar txt con aviso
+    "docx": null,
+    "xlsx": null,
+    "pptx": null,
+  };
+  return types[ext] !== undefined ? types[ext] : "text/plain";
+}
+
 function renderDownload(filename, content) {
   const div  = document.createElement("div");
   div.className = "rich-download";
-  const blob = new Blob([content], { type: "text/plain" });
+
+  const ext      = filename.split(".").pop().toLowerCase();
+  const isBinary = ["docx","xlsx","pptx"].includes(ext);
+
+  // Si la IA intentó generar un formato binario, redirigir a .txt con aviso
+  let finalFilename = filename;
+  let finalContent  = content;
+  let warningMsg    = null;
+
+  if (isBinary) {
+    finalFilename = filename.replace(/\.(docx|xlsx|pptx)$/, ".txt");
+    finalContent  = content;
+    warningMsg    = `⚠️ El contenido fue guardado como .txt — para generar un ${ext} real, pedile al bot que exporte como CSV o HTML.`;
+  }
+
+  const mime = getMimeType(finalFilename);
+  const blob = new Blob([finalContent], { type: mime });
   const url  = URL.createObjectURL(blob);
   const sizeKB = (blob.size / 1024).toFixed(1);
 
