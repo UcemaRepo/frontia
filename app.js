@@ -1,12 +1,14 @@
 const API_URL = "https://backendia-khz7.onrender.com";
 
 // ── Estado global ──────────────────────────────────────
-let mirrorHistory  = [];
-let mirrorUser     = null;
-let chatOwner      = null;   // si != null, estamos dentro del chat de otra persona
+let mirrorHistory    = [];
+let mirrorUser       = null;
+let chatOwner        = null;   // si != null, estamos dentro del chat de otra persona
 let lastActivityTime = Date.now();
-let lastEventTs    = 0;      // timestamp del último evento procesado
-let eventPollTimer = null;
+let lastEventTs      = 0;      // timestamp del último evento procesado (chat compartido)
+let eventPollTimer   = null;   // polling cuando estás DENTRO del chat de otro
+let mirrorPollTimer  = null;   // polling del panel espejo (solo observando)
+let mirrorMsgCount   = 0;      // cuántos mensajes había al cargar el espejo
 
 // ── Usuario ────────────────────────────────────────────
 let username = localStorage.getItem("username");
@@ -75,8 +77,8 @@ async function sendMessage() {
   if (!message) return;
 
   lastActivityTime = Date.now();
-  // Mostrar con etiqueta de autor si estamos en chat ajeno
-  addMessage("user", message, chatOwner ? username : null);
+  // El chat principal SIEMPRE es el propio - chatOwner solo aplica al panel espejo
+  addMessage("user", message);
   input.value = "";
   input.style.height = "auto";
 
@@ -90,15 +92,22 @@ async function sendMessage() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       message,
-      user:       username,
+      user:        username,
       personality: document.getElementById("personality").value,
-      chat_owner: chatOwner   // null = chat propio, string = chat ajeno
+      chat_owner:  null   // siempre nulo: el chat principal es siempre el propio
     })
   });
 
   const data = await res.json();
   loader.remove();
   renderBotMessage(data.reply);
+
+  // Notificar a quienes tengan tu chat abierto en el espejo
+  fetch(API_URL + "/notify-message", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ owner: username, actor: username })
+  }).catch(() => {});
 }
 
 // ── Renderizado de mensajes ────────────────────────────
@@ -236,6 +245,11 @@ function addEventBanner(text) {
 function startEventPolling(owner) {
   stopEventPolling();
   lastEventTs = Date.now() / 1000;
+  // Guardar cuántos mensajes había al entrar para saber desde dónde agregar
+  fetch(API_URL + "/history/" + owner)
+    .then(r => r.json())
+    .then(h => { window._sharedMsgCount = h.length; });
+
   eventPollTimer = setInterval(async () => {
     try {
       const res    = await fetch(`${API_URL}/events/${owner}?since=${lastEventTs}`);
@@ -245,12 +259,13 @@ function startEventPolling(owner) {
         if (ev.actor === username) return; // ignorar los propios
 
         if (ev.type === "join") {
-          addEventBanner(`${ev.actor} se unió al chat`);
+          appendSharedEvent(`${ev.actor} se unió al chat`);
+          updateSharedChatHeader(owner);
         } else if (ev.type === "leave") {
-          addEventBanner(`${ev.actor} salió del chat`);
+          appendSharedEvent(`${ev.actor} salió del chat`);
+          updateSharedChatHeader(owner);
         } else if (ev.type === "message") {
-          // Nuevo mensaje de otro usuario: recargar historial para mostrarlo
-          refreshSharedChat(owner);
+          refreshSharedPanel(owner);
         }
       });
     } catch (_) {}
@@ -259,24 +274,23 @@ function startEventPolling(owner) {
 
 function stopEventPolling() {
   if (eventPollTimer) { clearInterval(eventPollTimer); eventPollTimer = null; }
+  window._sharedMsgCount = 0;
 }
 
-// Recargar los últimos mensajes del chat compartido sin limpiar todo
-async function refreshSharedChat(owner) {
+// Recargar solo los mensajes nuevos en el panel espejo
+async function refreshSharedPanel(owner) {
   const res     = await fetch(API_URL + "/history/" + owner);
   const history = await res.json();
   if (!history.length) return;
 
-  // Solo agregar mensajes nuevos que no estén ya en el DOM
-  const chat     = document.getElementById("chat");
-  const existing = chat.querySelectorAll(".message.user, .message.bot").length;
-  const newItems = history.slice(Math.floor(existing / 2));  // cada par user+bot = 1 entrada
+  const known = window._sharedMsgCount || 0;
+  const newItems = history.slice(known);
+  window._sharedMsgCount = history.length;
 
   newItems.forEach(m => {
     const actor = m.actor || owner;
     if (actor !== username) {
-      addMessage("user", m.message, actor);
-      renderBotMessage(m.reply);
+      appendSharedMessage(actor, m.message, m.reply);
     }
   });
 }
@@ -319,6 +333,7 @@ async function loadUsers() {
 
 // ── Mirror ─────────────────────────────────────────────
 async function loadMirror(user) {
+  stopMirrorPolling(); // detener polling del usuario anterior si había uno
   mirrorUser = user;
 
   const res     = await fetch(API_URL + "/history/" + user);
@@ -348,7 +363,50 @@ async function loadMirror(user) {
   }
 
   document.getElementById("mirrorBtnJoin").style.display = "inline-flex";
+  mirrorMsgCount = history.length;
+
+  // Arrancar polling pasivo: actualiza el espejo sin que el usuario se haya unido
+  startMirrorPolling(user);
   loadUsers();
+}
+
+function startMirrorPolling(user) {
+  stopMirrorPolling();
+  mirrorPollTimer = setInterval(async () => {
+    if (chatOwner) return; // si ya estamos dentro, el eventPollTimer se ocupa
+    try {
+      const res     = await fetch(API_URL + "/history/" + user);
+      const history = await res.json();
+      if (history.length <= mirrorMsgCount) return;
+
+      const newItems = history.slice(mirrorMsgCount);
+      mirrorMsgCount = history.length;
+
+      const mirror = document.getElementById("mirrorChat");
+      const empty  = document.getElementById("mirrorEmpty");
+      empty.style.display = "none";
+
+      newItems.forEach(m => {
+        const actor = m.actor || user;
+        const q = document.createElement("div");
+        q.className = "mirror-msg-user";
+        q.innerText = (actor !== user ? "[" + actor + "] " : "") + m.message;
+        const a = document.createElement("div");
+        a.className = "mirror-msg-bot";
+        a.innerText = m.reply;
+        mirror.appendChild(q);
+        mirror.appendChild(a);
+        // Pulso visual para indicar actividad nueva
+        q.classList.add("mirror-new");
+        a.classList.add("mirror-new");
+      });
+      mirror.scrollTop = mirror.scrollHeight;
+    } catch (_) {}
+  }, 2500);
+}
+
+function stopMirrorPolling() {
+  if (mirrorPollTimer) { clearInterval(mirrorPollTimer); mirrorPollTimer = null; }
 }
 
 // ── Unirse al chat de otro usuario ────────────────────
@@ -357,39 +415,25 @@ async function joinChat() {
 
   chatOwner = mirrorUser;
 
-  // Notificar al backend → genera evento visible para el dueño
+  // Notificar al backend → genera evento "join" visible para el dueño
   await fetch(API_URL + "/join-chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user: username, owner: chatOwner })
   });
 
-  // Cargar el historial real del dueño
+  // Transformar el panel espejo en chat compartido interactivo
+  renderSharedChatPanel(chatOwner);
+
+  // Cargar historial en el panel espejo
   const res     = await fetch(API_URL + "/history/" + chatOwner);
   const history = await res.json();
+  populateSharedChat(history, chatOwner);
 
-  const chat = document.getElementById("chat");
-  chat.innerHTML = "";
+  // Indicar en el header del panel espejo quién está conectado
+  updateSharedChatHeader(chatOwner);
 
-  // Banner de contexto
-  const banner = document.createElement("div");
-  banner.className = "join-banner";
-  banner.innerHTML = `Estás en el chat de <strong>${chatOwner}</strong>. Tus mensajes se guardan aquí. <button onclick="leaveChat()">Salir</button>`;
-  chat.appendChild(banner);
-
-  // Volcar historial existente
-  history.forEach(m => {
-    const actor = m.actor || chatOwner;
-    addMessage("user", m.message, actor !== chatOwner ? actor : null);
-    renderBotMessage(m.reply);
-  });
-
-  document.getElementById("myStatus").innerHTML =
-    `En el chat de <strong>${chatOwner}</strong>`;
-  document.getElementById("message").placeholder =
-    `Escribir en el chat de ${chatOwner}...`;
-
-  // Iniciar polling para ver mensajes nuevos de otros
+  // Iniciar polling de eventos (mensajes nuevos, join/leave de otros)
   startEventPolling(chatOwner);
 }
 
@@ -405,10 +449,175 @@ async function leaveChat() {
   chatOwner = null;
   stopEventPolling();
 
-  document.getElementById("chat").innerHTML = "";
-  document.getElementById("myStatus").innerText = "Agente IA · activo";
-  document.getElementById("message").placeholder = "Escribí un mensaje...";
-  loadMyHistory();
+  // Restaurar el panel espejo al estado original
+  restoreMirrorPanel();
+}
+
+// ── Render del panel espejo como chat compartido ───────
+function renderSharedChatPanel(owner) {
+  const panel = document.querySelector(".mirror-panel");
+
+  // Header del panel con título + presencia + botón salir
+  panel.querySelector(".panel-header").innerHTML = `
+    <div class="shared-header-left">
+      <span class="panel-label">CHAT DE ${owner.toUpperCase()}</span>
+      <div class="shared-presence" id="sharedPresence"></div>
+    </div>
+    <button class="btn-leave" onclick="leaveChat()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      Salir
+    </button>
+  `;
+
+  // Área de mensajes del chat compartido
+  const mirrorChat = document.getElementById("mirrorChat");
+  mirrorChat.innerHTML = "";
+  mirrorChat.className = "shared-chat-messages";
+
+  // Input del chat compartido
+  let sharedInput = document.getElementById("sharedInputArea");
+  if (!sharedInput) {
+    sharedInput = document.createElement("div");
+    sharedInput.id = "sharedInputArea";
+    sharedInput.className = "shared-input-area";
+    sharedInput.innerHTML = `
+      <textarea id="sharedMessage" placeholder="Escribir en el chat de ${owner}..." rows="1"></textarea>
+      <button class="btn-send-shared" onclick="sendSharedMessage()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/></svg>
+      </button>
+    `;
+    panel.appendChild(sharedInput);
+
+    // Auto-resize del textarea compartido
+    const ta = sharedInput.querySelector("#sharedMessage");
+    ta.addEventListener("input", function() {
+      this.style.height = "auto";
+      this.style.height = Math.min(this.scrollHeight, 80) + "px";
+    });
+    ta.addEventListener("keydown", function(e) {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendSharedMessage(); }
+    });
+  }
+
+  document.getElementById("mirrorEmpty").style.display = "none";
+}
+
+function restoreMirrorPanel() {
+  const panel = document.querySelector(".mirror-panel");
+
+  // Restaurar header original
+  panel.querySelector(".panel-header").innerHTML = `
+    <span class="panel-label">VISTA ESPEJO</span>
+    <button class="btn-join" id="mirrorBtnJoin" style="display:none" onclick="joinChat()">Unirme</button>
+  `;
+
+  // Restaurar chat espejo
+  const mirrorChat = document.getElementById("mirrorChat");
+  mirrorChat.className = "";
+  mirrorChat.innerHTML = "";
+
+  // Eliminar input compartido
+  const sharedInput = document.getElementById("sharedInputArea");
+  if (sharedInput) sharedInput.remove();
+
+  // Restaurar estado vacío
+  document.getElementById("mirrorEmpty").style.display = "flex";
+  mirrorUser = null;
+}
+
+function populateSharedChat(history, owner) {
+  const container = document.getElementById("mirrorChat");
+  container.innerHTML = "";
+  history.forEach(m => {
+    const actor = m.actor || owner;
+    appendSharedMessage(actor, m.message, m.reply);
+  });
+  container.scrollTop = container.scrollHeight;
+}
+
+function appendSharedMessage(actor, message, reply) {
+  const container = document.getElementById("mirrorChat");
+  const isMe = actor === username;
+
+  const wrap = document.createElement("div");
+  wrap.className = "shared-msg-wrap " + (isMe ? "mine" : "theirs");
+
+  if (!isMe) {
+    const label = document.createElement("span");
+    label.className = "shared-msg-author";
+    label.innerText = actor;
+    wrap.appendChild(label);
+  }
+
+  const bubble = document.createElement("div");
+  bubble.className = "shared-msg-bubble " + (isMe ? "mine" : "theirs");
+  bubble.innerText = message;
+  wrap.appendChild(bubble);
+
+  const botBubble = document.createElement("div");
+  botBubble.className = "shared-msg-bot";
+  botBubble.innerText = reply;
+
+  container.appendChild(wrap);
+  container.appendChild(botBubble);
+  container.scrollTop = container.scrollHeight;
+}
+
+function appendSharedEvent(text) {
+  const container = document.getElementById("mirrorChat");
+  const div = document.createElement("div");
+  div.className = "shared-event";
+  div.innerText = text;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+async function updateSharedChatHeader(owner) {
+  // Mostrar quién está en este chat (via /users que tiene presencia)
+  const res   = await fetch(API_URL + "/users");
+  const users = await res.json();
+
+  // Mostrar participantes activos: el dueño + quien se unió
+  const presence = document.getElementById("sharedPresence");
+  if (!presence) return;
+
+  // Por ahora mostramos al menos el nombre del dueño y el nuestro
+  presence.innerHTML = `
+    <span class="presence-dot online"></span>${owner}
+    <span class="presence-dot online" style="margin-left:8px"></span>${username}
+  `;
+}
+
+// ── Enviar mensaje en el chat compartido ──────────────
+async function sendSharedMessage() {
+  const input   = document.getElementById("sharedMessage");
+  const message = input.value.trim();
+  if (!message || !chatOwner) return;
+
+  input.value = "";
+  input.style.height = "auto";
+
+  // Mostrar optimista en el espejo
+  const loader = document.createElement("div");
+  loader.className = "shared-loader";
+  loader.innerText = "IA escribiendo...";
+  document.getElementById("mirrorChat").appendChild(loader);
+  document.getElementById("mirrorChat").scrollTop = 99999;
+
+  const res = await fetch(API_URL + "/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message,
+      user:        username,
+      personality: document.getElementById("personality").value,
+      chat_owner:  chatOwner
+    })
+  });
+
+  const data = await res.json();
+  loader.remove();
+  appendSharedMessage(username, message, data.reply);
 }
 
 async function loadMyHistory() {
