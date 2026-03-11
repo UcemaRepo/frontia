@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,7 +8,6 @@
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
-
 <body>
 
 <div class="layout">
@@ -31,7 +29,7 @@
         <div class="avatar-dot"></div>
         <div>
           <div class="header-name" id="username"></div>
-          <div class="header-sub">Agente IA · activo</div>
+          <div class="header-sub" id="myStatus">Agente IA · activo</div>
         </div>
       </div>
       <div class="header-actions">
@@ -40,9 +38,15 @@
           <option value="analyst">Analista</option>
           <option value="creative">Creativo</option>
           <option value="strict">Estricto</option>
+          <option value="dev">Dev</option>
+          <option value="coach">Coach</option>
+          <option value="custom">✦ Personalizada</option>
         </select>
+        <button class="btn-icon" onclick="openPersonalityModal()" title="Editar personalidad">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+        </button>
         <button class="btn-ghost" onclick="deleteMyChat()" title="Borrar chat">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/><path d="M10,11v6M14,11v6"/><path d="M9,6V4a1,1,0,0,1,1-1h4a1,1,0,0,1,1,1v2"/></svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/><path d="M10,11v6M14,11v6"/><path d="M9,6V4a1,1,0,0,1,1-1h4a1,1,0,0,1,1,1v2"/></svg>
         </button>
       </div>
     </header>
@@ -83,8 +87,31 @@
 
 </div>
 
-<script src="app.js"></script>
+<!-- Modal personalidad -->
+<div class="modal-overlay" id="personalityModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Personalidad del agente</span>
+      <button class="modal-close" onclick="closePersonalityModal()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-desc">Escribí una personalidad completamente personalizada. Cuando esté definida, el selector del chat usará esta en lugar del preset.</p>
+      <textarea id="customPersonality" class="personality-editor" placeholder="Ejemplo: Sos un asistente especializado en marketing digital para startups. Respondés siempre con bullet points, priorizás el ROI y usás tono profesional pero directo..."></textarea>
+      <div class="modal-presets">
+        <span class="modal-preset-label">O cargá un preset como base:</span>
+        <div class="preset-chips" id="presetChips"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="clearPersonality()">Limpiar</button>
+      <button class="btn-primary" onclick="savePersonality()">Guardar</button>
+    </div>
+  </div>
+</div>
 
+<script src="app.js"></script>
 </body>
 </html>
 
