@@ -344,6 +344,44 @@ function leaveInheritedChat() {
   loadMyHistory();
 }
 
+async function askAboutUser() {
+  if (!mirrorUser) return;
+
+  const question = prompt(`¿Qué querés saber sobre ${mirrorUser}?`);
+  if (!question || !question.trim()) return;
+
+  // Mostrar el mensaje en el chat propio como si fuera una pregunta normal
+  addMessage("user", question);
+
+  const loader = document.createElement("div");
+  loader.className = "loader";
+  document.getElementById("chat").appendChild(loader);
+  document.getElementById("chat").scrollTop = 99999;
+
+  const res = await fetch(API_URL + "/ask-about", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user: username,
+      target_user: mirrorUser,
+      message: question,
+      personality: document.getElementById("personality").value
+    })
+  });
+
+  const data = await res.json();
+  loader.remove();
+
+  // Badge indicando que la respuesta es sobre otro usuario
+  const chat = document.getElementById("chat");
+  const badge = document.createElement("div");
+  badge.className = "about-badge";
+  badge.innerText = `Sobre ${mirrorUser}`;
+  chat.appendChild(badge);
+
+  renderBotMessage(data.reply);
+}
+
 async function loadMyHistory() {
   const res = await fetch(API_URL + "/history/" + username);
   const history = await res.json();
