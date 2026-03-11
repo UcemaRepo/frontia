@@ -689,3 +689,15 @@ body {
 .mirror-msg-bot .widget-title { font-size: 9px; }
 .mirror-msg-bot .widget-body  { font-size: 11px; }
 .mirror-msg-bot .download-link { font-size: 11px; }
+
+/* ─── Warning de formato de descarga ─── */
+.download-warning {
+  width: 100%;
+  font-size: 11px;
+  color: var(--col-away);
+  background: rgba(245,166,35,0.08);
+  border-top: 1px solid rgba(245,166,35,0.2);
+  padding: 6px 10px;
+  margin-top: 6px;
+  line-height: 1.5;
+}
