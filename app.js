@@ -2,6 +2,7 @@ const API_URL = "https://backendia-khz7.onrender.com";
 
 let mirrorHistory = [];
 let mirrorUser = null;
+let inheritedFrom = null;   // usuario cuyo historial estamos continuando
 let lastActivityTime = Date.now();
 
 // ── Usuario ────────────────────────────────────────────
@@ -89,7 +90,8 @@ async function sendMessage() {
     body: JSON.stringify({
       message,
       user: username,
-      personality: document.getElementById("personality").value
+      personality: document.getElementById("personality").value,
+      inherited_from: inheritedFrom   // null si es chat propio
     })
   });
 
@@ -313,13 +315,31 @@ async function loadMirror(user) {
 
 function joinChat() {
   if (!mirrorHistory.length) return;
+
+  inheritedFrom = mirrorUser;
+
   const chat = document.getElementById("chat");
   chat.innerHTML = "";
+
+  // Banner indicando que se heredó el contexto
+  const banner = document.createElement("div");
+  banner.className = "join-banner";
+  banner.innerHTML = `Continuando el chat de <strong>${mirrorUser}</strong> — el bot tiene todo el contexto. <button onclick="leaveInheritedChat()">Salir</button>`;
+  chat.appendChild(banner);
+
   mirrorHistory.forEach(m => {
     addMessage("user", m.message);
     renderBotMessage(m.reply);
   });
-  alert("Ahora continuás este chat desde tu usuario");
+
+  document.getElementById("myStatus").innerText = "Continuando chat de " + mirrorUser;
+}
+
+function leaveInheritedChat() {
+  inheritedFrom = null;
+  document.getElementById("chat").innerHTML = "";
+  document.getElementById("myStatus").innerText = "Agente IA · activo";
+  loadMyHistory();
 }
 
 async function loadMyHistory() {
@@ -419,7 +439,3 @@ async function clearPersonality() {
 document.getElementById("personalityModal").addEventListener("click", function(e) {
   if (e.target === this) closePersonalityModal();
 });
-
-
-
-
