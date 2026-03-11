@@ -269,9 +269,9 @@ async function loadMirror(user) {
   const empty  = document.getElementById("mirrorEmpty");
   mirror.innerHTML = "";
 
-  if (!history.length) { empty.style.display = "flex"; }
+  if (!history.length) { if (empty) empty.style.display = "flex"; }
   else {
-    empty.style.display = "none";
+    if (empty) empty.style.display = "none";
     history.forEach(m => {
       const actor = m.actor || user;
       const q = document.createElement("div"); q.className = "mirror-msg-user";
@@ -283,7 +283,8 @@ async function loadMirror(user) {
     mirror.scrollTop = mirror.scrollHeight;
   }
 
-  document.getElementById("mirrorBtnExpand").style.display = "inline-flex";
+  const expandBtn = document.getElementById("mirrorBtnExpand");
+  if (expandBtn) expandBtn.style.display = "inline-flex";
   mirrorMsgCount = history.length;
   startMirrorPolling(user);
   loadUsers();
@@ -294,7 +295,7 @@ function handleMirrorUpdate(ev) {
   const mirror = document.getElementById("mirrorChat");
   const empty  = document.getElementById("mirrorEmpty");
   if (!mirror) return;
-  empty.style.display = "none";
+  if (empty) empty.style.display = "none";
   mirrorMsgCount++;
 
   const q = document.createElement("div"); q.className = "mirror-msg-user mirror-new";
@@ -346,10 +347,10 @@ async function loadRooms() {
   list.innerHTML = "";
 
   if (!rooms.length) {
-    empty.style.display = "flex";
+    if (empty) empty.style.display = "flex";
     return;
   }
-  empty.style.display = "none";
+  if (empty) empty.style.display = "none";
 
   rooms.forEach(room => {
     const card = document.createElement("div");
@@ -794,13 +795,17 @@ function startDragWindow(e, roomId) {
 
 // ── Historial propio ───────────────────────────────────────────────────
 async function loadMyHistory() {
-  const res     = await fetch(API_URL + "/history/" + username);
-  const history = await res.json();
-  const chat    = document.getElementById("chat");
-  history.forEach(m => {
-    addMessage("user", m.message, null, chat);
-    renderBotMessage(m.reply, chat);
-  });
+  if (!username) return;
+  try {
+    const res     = await fetch(API_URL + "/history/" + username);
+    const history = await res.json();
+    const chat    = document.getElementById("chat");
+    if (!chat) return;
+    history.forEach(m => {
+      addMessage("user", m.message, null, chat);
+      renderBotMessage(m.reply, chat);
+    });
+  } catch (_) {}
 }
 
 async function deleteMyChat() {
