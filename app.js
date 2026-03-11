@@ -1,54 +1,55 @@
 const API_URL = "https://backendia-khz7.onrender.com";
 
-// ── Estado ─────────────────────────────────────────────────────────────
-let username        = localStorage.getItem("username");
-let activeView      = "personal";   // "personal" | "user:<name>" | "channel:<id>"
-let myEventTs       = 0;
-let mirrorUser      = null;
-let mirrorMsgCount  = 0;
-let mirrorPollTimer = null;
-let channelPollTs   = {};           // { channel_id: lastTs }
-let lastActivityTime = Date.now();
-let globalPollTimer = null;
+// ── Estado global ──────────────────────────────────────────────────────
+let username     = localStorage.getItem("username");
+let activeView   = "personal"; // "personal" | "dm:<user>" | "channel:<id>"
+let myEventTs    = 0;
+let mirrorUser   = null;
+let mirrorCount  = 0;
+let mirrorTimer  = null;
+let dmUnread     = {};
+let lastActivity = Date.now();
 
 if (!username) {
   username = prompt("Ingresá tu nombre de usuario");
-  if (username) localStorage.setItem("username", username);
+  if (username) localStorage.setItem("username", username.trim());
+  else location.reload();
 }
-document.getElementById("username").innerText = username;
+document.getElementById("username").textContent = username;
 
-// ── Init ───────────────────────────────────────────────────────────────
-loadPersonalityModal();
+// ── Arranque ────────────────────────────────────────────────────────────
+sendHeartbeat();
+setInterval(sendHeartbeat, 20000);
+setInterval(loadUsers,     5000);
+setInterval(loadChannels,  6000);
+setInterval(pollEvents,    2500);
+
 loadUsers();
 loadChannels();
-loadPersonalView();
-setInterval(sendHeartbeat, 20000);
-setInterval(loadUsers,      5000);
-setInterval(loadChannels,   6000);
-setInterval(pollMyEvents,   2500);
+renderPersonal();
 
-["mousemove","keydown","click","scroll"].forEach(e =>
-  document.addEventListener(e, () => { lastActivityTime = Date.now(); })
+["mousemove","keydown","click","scroll"].forEach(ev =>
+  document.addEventListener(ev, () => { lastActivity = Date.now(); }, { passive: true })
 );
 
-function isUserActive() { return Date.now() - lastActivityTime < 300000; }
+window.addEventListener("beforeunload", () =>
+  navigator.sendBeacon(API_URL + "/offline",
+    new Blob([JSON.stringify({ user: username })], { type: "application/json" }))
+);
 
+// ── Heartbeat ───────────────────────────────────────────────────────────
 async function sendHeartbeat() {
   if (!username) return;
   fetch(API_URL + "/heartbeat", {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ user: username, active: isUserActive() })
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user: username, active: Date.now() - lastActivity < 300000 })
   }).catch(() => {});
 }
 
-window.addEventListener("beforeunload", () => {
-  navigator.sendBeacon(API_URL + "/offline",
-    new Blob([JSON.stringify({ user: username })], { type:"application/json" }));
-});
-
-// ── Input textarea ─────────────────────────────────────────────────────
+// ── Input ───────────────────────────────────────────────────────────────
 const msgInput = document.getElementById("messageInput");
-msgInput.addEventListener("input", function() {
+msgInput.addEventListener("input", function () {
   this.style.height = "auto";
   this.style.height = Math.min(this.scrollHeight, 120) + "px";
 });
@@ -56,510 +57,334 @@ msgInput.addEventListener("keydown", e => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
 });
 
-// ── Envío unificado según vista activa ─────────────────────────────────
 async function handleSend() {
   const msg = msgInput.value.trim();
   if (!msg) return;
-  msgInput.value = ""; msgInput.style.height = "auto";
-
-  if (activeView === "personal") {
-    await sendPersonalMessage(msg);
-  } else if (activeView.startsWith("channel:")) {
-    await sendChannelMessage(activeView.slice(8), msg);
-  } else if (activeView.startsWith("dm:")) {
-    await sendDM(activeView.slice(3), msg);
-  }
+  msgInput.value = "";
+  msgInput.style.height = "auto";
+  if      (activeView === "personal")              await sendToAI(msg);
+  else if (activeView.startsWith("dm:"))           await sendDM(activeView.slice(3), msg);
+  else if (activeView.startsWith("channel:"))      await sendToChannel(activeView.slice(8), msg);
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// ── VISTA: CHAT PERSONAL ─────────────────────────────────────────────
+// VISTAS
 // ══════════════════════════════════════════════════════════════════════
-function switchToPersonal() {
-  setActiveNav("nav-personal");
-  activeView = "personal";
 
+// ── 1. Chat personal ──────────────────────────────────────────────────
+async function renderPersonal() {
+  activeView = "personal";
+  setNavActive("nav-personal");
   setHeader(
     `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
-    "Mi chat", "Chat personal con el agente IA", ""
+    "Mi chat", "Chat personal con el agente IA",
+    `<button class="btn-ghost-sm" onclick="deleteMyChat()" title="Borrar historial">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H5L4,6"/><path d="M10,11v6M14,11v6"/><path d="M9,6V4h6v2"/></svg>
+    </button>`
   );
-
-  document.getElementById("messageInput").placeholder = "Escribí un mensaje...";
-  loadPersonalView();
-}
-
-async function loadPersonalView() {
+  msgInput.placeholder = "Escribí un mensaje para el agente...";
+  const area = getArea();
+  area.innerHTML = "";
   try {
-    const res  = await fetch(API_URL + "/history/" + username);
-    const hist = await res.json();
-    const area = document.getElementById("messagesArea");
-    area.innerHTML = "";
-    hist.forEach(m => {
-      appendUserBubble(area, m.message, username);
-      appendBotBubble(area, m.reply);
-    });
-    scrollToBottom(area);
+    const hist = await apiFetch("/history/" + username);
+    hist.forEach(m => { addUserBubble(area, m.message, username); addBotBubble(area, m.reply); });
+    scrollBottom(area);
   } catch (_) {}
 }
 
-async function sendPersonalMessage(message) {
-  const area = document.getElementById("messagesArea");
-  appendUserBubble(area, message, username);
-  const loader = appendLoader(area);
-
+async function sendToAI(message) {
+  const area = getArea();
+  addUserBubble(area, message, username);
+  const loader = addLoader(area);
   try {
-    const res  = await fetch(API_URL + "/chat", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ message, user: username, personality: getPersonality() })
-    });
-    const data = await res.json();
-    loader.remove();
-    appendBotBubble(area, data.reply);
-  } catch (e) {
-    loader.remove();
-    appendBotBubble(area, "Error al conectar con el servidor.");
-  }
+    const data = await apiFetch("/chat", "POST", { message, user: username, personality: getPersonality() });
+    loader.remove(); addBotBubble(area, data.reply);
+  } catch (_) { loader.remove(); addBotBubble(area, "Error al conectar."); }
 }
 
 async function deleteMyChat() {
   if (!confirm("¿Borrar todo tu historial?")) return;
-  await fetch(API_URL + "/delete/" + username, { method:"DELETE" });
-  if (activeView === "personal") {
-    document.getElementById("messagesArea").innerHTML = "";
-  }
+  await apiFetch("/delete/" + username, "DELETE");
+  if (activeView === "personal") getArea().innerHTML = "";
 }
 
-// ══════════════════════════════════════════════════════════════════════
-// ── VISTA: CANAL ──────────────────────────────────────────────────────
-// ══════════════════════════════════════════════════════════════════════
-async function switchToChannel(channelId) {
-  setActiveNav("nav-channel-" + channelId);
-  activeView = "channel:" + channelId;
-
-  // Cargar info del canal
-  let ch;
-  try {
-    const res = await fetch(API_URL + "/channels/" + channelId);
-    ch = await res.json();
-  } catch (_) { return; }
-
-  const isOwner = ch.creator === username;
-  const deletBtn = isOwner
-    ? `<button class="btn-danger-sm" onclick="deleteChannel('${channelId}')" title="Borrar canal">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/></svg>
-        Borrar canal
-       </button>`
-    : "";
-
-  setHeader(
-    `<span class="channel-hash">#</span>`,
-    ch.name,
-    `Creado por ${ch.creator}`,
-    deletBtn
-  );
-
-  document.getElementById("messageInput").placeholder = `Escribir en #${ch.name}...`;
-
-  const area = document.getElementById("messagesArea");
-  area.innerHTML = "";
-  (ch.messages || []).forEach(m => {
-    appendUserBubble(area, m.message, m.actor);
-    appendBotBubble(area, m.reply);
-  });
-  scrollToBottom(area);
-
-  // Iniciar polling del canal
-  if (!channelPollTs[channelId]) channelPollTs[channelId] = Date.now() / 1000;
-}
-
-async function sendChannelMessage(channelId, message) {
-  const area = document.getElementById("messagesArea");
-  appendUserBubble(area, message, username);
-  const loader = appendLoader(area);
-
-  try {
-    const res  = await fetch(API_URL + `/channels/${channelId}/chat`, {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ message, user: username, personality: getPersonality() })
-    });
-    const data = await res.json();
-    loader.remove();
-    appendBotBubble(area, data.reply);
-  } catch (e) {
-    loader.remove();
-    appendBotBubble(area, "Error al enviar.");
-  }
-}
-
-async function deleteChannel(channelId) {
-  if (!confirm("¿Borrar este canal permanentemente?")) return;
-  await fetch(API_URL + "/channels/" + channelId, {
-    method:"DELETE", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ user: username })
-  });
-  switchToPersonal();
-  loadChannels();
-}
-
-// ── Polling de eventos globales ────────────────────────────────────────
-async function pollMyEvents() {
-  if (!username) return;
-  try {
-    const res    = await fetch(`${API_URL}/events/${username}?since=${myEventTs}`);
-    const events = await res.json();
-
-    events.forEach(ev => {
-      myEventTs = Math.max(myEventTs, ev.ts);
-
-      if (ev.type === "channel_created" && ev.actor !== username) {
-        loadChannels();
-        showToast(`${ev.actor} creó el canal #${ev.channel_name}`);
-      } else if (ev.type === "channel_deleted") {
-        loadChannels();
-        // Si estábamos en ese canal, volver al personal
-        if (activeView === "channel:" + ev.channel_id) {
-          switchToPersonal();
-          showToast("El canal fue borrado por su creador");
-        }
-      } else if (ev.type === "channel_message" && ev.actor !== username) {
-        // Si estamos viendo ese canal, agregar el mensaje en tiempo real
-        if (activeView === "channel:" + ev.channel_id) {
-          const area = document.getElementById("messagesArea");
-          appendUserBubble(area, ev.message, ev.actor);
-          appendBotBubble(area, ev.reply);
-        } else {
-          // Badge de notificación en el sidebar
-          badgeChannel(ev.channel_id);
-        }
-      } else if (ev.type === "dm") {
-        // Mensaje directo recibido
-        if (activeView === "dm:" + ev.actor) {
-          // Estamos en la conversación → mostrar en tiempo real
-          const area = document.getElementById("messagesArea");
-          appendDMBubble(area, ev.message, ev.actor, false);
-        } else {
-          // No estamos en la conv → badge en el sidebar
-          dmUnread[ev.actor] = (dmUnread[ev.actor] || 0) + 1;
-          const badge = document.getElementById("dm-badge-" + ev.actor);
-          if (badge) {
-            badge.innerText = dmUnread[ev.actor] > 9 ? "9+" : dmUnread[ev.actor];
-            badge.style.display = "inline-flex";
-          }
-          showToast(`💬 ${ev.actor}: ${ev.message.slice(0, 50)}`);
-        }
-      } else if (ev.type === "mirror_update") {
-        handleMirrorUpdate(ev);
-      }
-    });
-  } catch (_) {}
-}
-
-// ══════════════════════════════════════════════════════════════════════
-// ── VISTA: MENSAJES DIRECTOS (DM) ────────────────────────────────────
-// ══════════════════════════════════════════════════════════════════════
-async function switchToDM(otherUser) {
-  setActiveNav("nav-user-" + otherUser);
+// ── 2. DM directo ─────────────────────────────────────────────────────
+async function renderDM(otherUser) {
   activeView = "dm:" + otherUser;
+  setNavActive("nav-user-" + otherUser);
 
-  // Limpiar badge
   dmUnread[otherUser] = 0;
   const badge = document.getElementById("dm-badge-" + otherUser);
   if (badge) badge.style.display = "none";
 
   setHeader(
-    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+    `<div class="dm-header-avatar">${otherUser[0].toUpperCase()}</div>`,
     otherUser,
-    "Mensaje directo · solo entre ustedes, sin IA",
-    `<button class="btn-icon-sm" onclick="loadMirror('${otherUser}')" title="Ver su chat con IA">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    "Mensaje directo · sin IA",
+    `<button class="btn-icon-sm" onclick="loadMirror('${otherUser}')" title="Ver chat con IA">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
     </button>`
   );
+  msgInput.placeholder = `Mensaje directo a ${otherUser}...`;
 
-  document.getElementById("messageInput").placeholder = `Mensaje directo a ${otherUser}...`;
-
-  const area = document.getElementById("messagesArea");
-  area.innerHTML = "";
-
-  // Separador visual de inicio
-  const sep = document.createElement("div");
-  sep.className = "dm-start-banner";
-  sep.innerHTML = `
-    <div class="dm-start-avatar">${otherUser[0].toUpperCase()}</div>
-    <div class="dm-start-name">${otherUser}</div>
-    <div class="dm-start-sub">Este es el inicio de tu conversación directa con <strong>${otherUser}</strong>.</div>
+  const area = getArea();
+  area.innerHTML = `
+    <div class="dm-start-banner">
+      <div class="dm-start-avatar">${otherUser[0].toUpperCase()}</div>
+      <div class="dm-start-name">${otherUser}</div>
+      <div class="dm-start-sub">Inicio de tu conversación directa con <strong>${otherUser}</strong>. La IA no participa aquí.</div>
+    </div>
   `;
-  area.appendChild(sep);
 
   try {
-    const res  = await fetch(`${API_URL}/dm/${otherUser}?user=${encodeURIComponent(username)}`);
-    const msgs = await res.json();
-    msgs.forEach(m => appendDMBubble(area, m.message, m.from, m.from === username, m.ts));
-    scrollToBottom(area);
+    const msgs = await apiFetch(`/dm/${otherUser}?user=${encodeURIComponent(username)}`);
+    msgs.forEach(m => addDMBubble(area, m.message, m.from, m.from === username, m.ts));
+    scrollBottom(area);
   } catch (_) {}
 }
 
 async function sendDM(otherUser, message) {
-  const area = document.getElementById("messagesArea");
-  appendDMBubble(area, message, username, true);
-
+  addDMBubble(getArea(), message, username, true);
   try {
-    await fetch(`${API_URL}/dm/${otherUser}`, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ from: username, message })
-    });
-  } catch (_) {
-    showToast("Error al enviar el mensaje");
-  }
+    await apiFetch(`/dm/${otherUser}`, "POST", { from: username, message });
+  } catch (_) { showToast("Error al enviar"); }
 }
 
-function appendDMBubble(container, text, from, isMe, ts) {
-  // Agrupar con el mensaje anterior si es del mismo autor y < 2 min
-  const prev = container.lastElementChild;
-  const sameAuthor = prev && prev.dataset.author === from
-                     && (Date.now()/1000 - (parseFloat(prev.dataset.ts)||0)) < 120;
+// ── 3. Canal ──────────────────────────────────────────────────────────
+async function renderChannel(channelId) {
+  activeView = "channel:" + channelId;
+  setNavActive("nav-ch-" + channelId);
+  const badge = document.getElementById("ch-badge-" + channelId);
+  if (badge) { badge.style.display = "none"; badge.dataset.n = 0; }
 
-  if (!sameAuthor) {
-    const wrap = document.createElement("div");
-    wrap.className = "dm-group " + (isMe ? "dm-group-mine" : "dm-group-theirs");
-    wrap.dataset.author = from;
-    wrap.dataset.ts     = ts || Date.now()/1000;
+  let ch;
+  try { ch = await apiFetch("/channels/" + channelId); } catch (_) { return; }
 
-    if (!isMe) {
-      const avatar = document.createElement("div");
-      avatar.className = "dm-group-avatar";
-      avatar.innerText = from[0].toUpperCase();
-      wrap.appendChild(avatar);
-    }
+  setHeader(
+    `<span class="channel-hash">#</span>`, ch.name, `Canal · creado por ${ch.creator}`,
+    ch.creator === username
+      ? `<button class="btn-danger-sm" onclick="deleteChannel('${channelId}')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H5L4,6"/></svg>
+          Borrar</button>` : ""
+  );
+  msgInput.placeholder = `Escribir en #${ch.name}...`;
+  const area = getArea();
+  area.innerHTML = "";
+  (ch.messages || []).forEach(m => { addUserBubble(area, m.message, m.actor); addBotBubble(area, m.reply); });
+  scrollBottom(area);
+}
 
-    const inner = document.createElement("div");
-    inner.className = "dm-group-inner";
+async function sendToChannel(channelId, message) {
+  const area = getArea();
+  addUserBubble(area, message, username);
+  const loader = addLoader(area);
+  try {
+    const data = await apiFetch(`/channels/${channelId}/chat`, "POST",
+      { message, user: username, personality: getPersonality() });
+    loader.remove(); addBotBubble(area, data.reply);
+  } catch (_) { loader.remove(); addBotBubble(area, "Error."); }
+}
 
-    if (!isMe) {
-      const name = document.createElement("div");
-      name.className = "dm-sender"; name.innerText = from;
-      inner.appendChild(name);
-    }
-
-    const bubble = document.createElement("div");
-    bubble.className = "dm-bubble " + (isMe ? "dm-bubble-mine" : "dm-bubble-theirs");
-    bubble.innerText = text;
-    inner.appendChild(bubble);
-
-    wrap.appendChild(inner);
-    container.appendChild(wrap);
-  } else {
-    // Mismo autor — agregar burbuja al grupo existente
-    const inner = prev.querySelector(".dm-group-inner");
-    const bubble = document.createElement("div");
-    bubble.className = "dm-bubble " + (isMe ? "dm-bubble-mine" : "dm-bubble-theirs") + " dm-bubble-stacked";
-    bubble.innerText = text;
-    inner.appendChild(bubble);
-    prev.dataset.ts = ts || Date.now()/1000;
-  }
-
-  scrollToBottom(container);
+async function deleteChannel(channelId) {
+  if (!confirm("¿Borrar este canal permanentemente?")) return;
+  await apiFetch("/channels/" + channelId, "DELETE", { user: username });
+  renderPersonal(); loadChannels();
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// ── USUARIOS & SIDEBAR ────────────────────────────────────────────────
+// POLLING — maneja eventos sin tocar el área principal salvo que corresponda
+// ══════════════════════════════════════════════════════════════════════
+async function pollEvents() {
+  if (!username) return;
+  try {
+    const events = await apiFetch(`/events/${username}?since=${myEventTs}`);
+    events.forEach(handleEvent);
+  } catch (_) {}
+}
+
+function handleEvent(ev) {
+  myEventTs = Math.max(myEventTs, ev.ts);
+  switch (ev.type) {
+
+    case "dm":
+      if (activeView === "dm:" + ev.actor) {
+        addDMBubble(getArea(), ev.message, ev.actor, false);
+      } else {
+        dmUnread[ev.actor] = (dmUnread[ev.actor] || 0) + 1;
+        const b = document.getElementById("dm-badge-" + ev.actor);
+        if (b) { b.textContent = dmUnread[ev.actor] > 9 ? "9+" : dmUnread[ev.actor]; b.style.display = "inline-flex"; }
+        showToast(`💬 ${ev.actor}: ${ev.message.slice(0, 60)}`);
+      }
+      break;
+
+    case "channel_created":
+      if (ev.actor !== username) { loadChannels(); showToast(`${ev.actor} creó #${ev.channel_name}`); }
+      break;
+
+    case "channel_deleted":
+      loadChannels();
+      if (activeView === "channel:" + ev.channel_id) { renderPersonal(); showToast("El canal fue borrado"); }
+      break;
+
+    case "channel_message":
+      if (ev.actor === username) break;
+      if (activeView === "channel:" + ev.channel_id) {
+        addUserBubble(getArea(), ev.message, ev.actor);
+        addBotBubble(getArea(), ev.reply);
+      } else {
+        const b = document.getElementById("ch-badge-" + ev.channel_id);
+        if (b) { const n = (parseInt(b.dataset.n || 0) + 1); b.textContent = n > 9 ? "9+" : n; b.dataset.n = n; b.style.display = "inline-flex"; }
+      }
+      break;
+
+    case "mirror_update":
+      // SOLO va al panel espejo derecho — nunca al área principal
+      if (ev.actor === mirrorUser) appendToMirror(ev.message, ev.reply);
+      break;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// SIDEBAR
 // ══════════════════════════════════════════════════════════════════════
 async function loadUsers() {
   try {
-    const res   = await fetch(API_URL + "/users");
-    const users = await res.json();
+    const users = await apiFetch("/users");
     const list  = document.getElementById("usersList");
     if (!list) return;
-    list.innerHTML = "";
-
     const order = { online:0, away:1, offline:2 };
     users.sort((a,b) => order[a.status] - order[b.status]);
+    list.innerHTML = "";
+    users.filter(u => u.name !== username).forEach(u => list.appendChild(makeUserCard(u)));
+  } catch (_) {}
+}
 
-    users.forEach(u => {
-      if (u.name === username) return;
-      const id  = "nav-user-" + u.name;
-      const el  = document.createElement("div");
-      el.id        = id;
-      el.className = "sidebar-item" + (activeView === "dm:" + u.name ? " active" : "");
-      el.onclick   = () => switchToDM(u.name);
+function makeUserCard(u) {
+  const el = document.createElement("div");
+  el.id        = "nav-user-" + u.name;
+  el.className = "sidebar-item user-item" + (activeView === "dm:" + u.name ? " active" : "");
+  el.onclick   = () => renderDM(u.name);
+  el.innerHTML = `
+    <span class="status-dot ${u.status}"></span>
+    <span class="item-label">${u.name}</span>
+    <span class="dm-unread" id="dm-badge-${u.name}" style="display:none"></span>
+    <div class="user-item-actions">
+      <button class="user-action-btn dm-btn" title="Mensaje directo" onclick="event.stopPropagation();renderDM('${u.name}')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      </button>
+      <button class="user-action-btn mirror-btn" title="Ver espejo" onclick="event.stopPropagation();loadMirror('${u.name}')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+  `;
+  return el;
+}
+
+async function loadChannels() {
+  try {
+    const channels = await apiFetch("/channels");
+    const list  = document.getElementById("channelsList");
+    const empty = document.getElementById("channelsEmpty");
+    if (!list) return;
+    const ids = Object.keys(channels);
+    if (empty) empty.style.display = ids.length ? "none" : "block";
+    list.innerHTML = "";
+    ids.forEach(id => {
+      const ch = channels[id];
+      const el = document.createElement("div");
+      el.id        = "nav-ch-" + id;
+      el.className = "sidebar-item" + (activeView === "channel:" + id ? " active" : "");
+      el.onclick   = () => renderChannel(id);
       el.innerHTML = `
-        <span class="status-dot ${u.status}"></span>
-        <span class="item-label">${u.name}</span>
-        <span class="dm-unread" id="dm-badge-${u.name}" style="display:none"></span>
-        <button class="item-action mirror-btn" title="Ver espejo" onclick="event.stopPropagation();loadMirror('${u.name}')">
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        </button>
+        <span class="channel-hash-sm">#</span>
+        <span class="item-label">${ch.name}</span>
+        <span class="channel-badge" id="ch-badge-${id}" style="display:none"></span>
+        ${ch.creator === username
+          ? `<button class="item-action danger" title="Borrar" onclick="event.stopPropagation();deleteChannel('${id}')">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H5L4,6"/></svg>
+             </button>` : ""}
       `;
       list.appendChild(el);
     });
   } catch (_) {}
 }
 
-async function loadChannels() {
-  try {
-    const res      = await fetch(API_URL + "/channels");
-    const channels = await res.json();
-    const list     = document.getElementById("channelsList");
-    const empty    = document.getElementById("channelsEmpty");
-    if (!list) return;
-
-    list.innerHTML = "";
-    const ids = Object.keys(channels);
-
-    if (empty) empty.style.display = ids.length ? "none" : "block";
-
-    ids.forEach(id => {
-      const ch  = channels[id];
-      const nav = document.createElement("div");
-      nav.id        = "nav-channel-" + id;
-      nav.className = "sidebar-item channel-item" + (activeView === "channel:" + id ? " active" : "");
-      nav.onclick   = () => switchToChannel(id);
-      nav.innerHTML = `
-        <span class="channel-hash-sm">#</span>
-        <span class="item-label">${ch.name}</span>
-        ${ch.creator === username ? `
-          <button class="item-action danger" onclick="event.stopPropagation();deleteChannel('${id}')" title="Borrar">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/></svg>
-          </button>` : ""}
-        <span class="channel-badge" id="badge-${id}" style="display:none"></span>
-      `;
-      list.appendChild(nav);
-    });
-  } catch (_) {}
-}
-
-function badgeChannel(channelId) {
-  const badge = document.getElementById("badge-" + channelId);
-  if (!badge) return;
-  const count = (parseInt(badge.dataset.count) || 0) + 1;
-  badge.dataset.count = count;
-  badge.innerText = count > 9 ? "9+" : count;
-  badge.style.display = "inline-flex";
-}
-
-function clearBadge(channelId) {
-  const badge = document.getElementById("badge-" + channelId);
-  if (badge) { badge.style.display = "none"; badge.dataset.count = 0; }
-}
-
-// ── Activar nav item ───────────────────────────────────────────────────
-function setActiveNav(id) {
+function setNavActive(id) {
   document.querySelectorAll(".sidebar-item").forEach(el => el.classList.remove("active"));
   const el = document.getElementById(id);
   if (el) el.classList.add("active");
-
-  // Limpiar badge si aplica
-  if (id.startsWith("nav-channel-")) clearBadge(id.slice(12));
-}
-
-// ── Header dinámico ────────────────────────────────────────────────────
-function setHeader(iconHTML, title, sub, actionsHTML) {
-  document.getElementById("headerIcon").innerHTML  = iconHTML;
-  document.getElementById("headerTitle").innerText = title;
-  document.getElementById("headerSub").innerText   = sub;
-  document.getElementById("headerActions").innerHTML = actionsHTML;
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// ── MIRROR ────────────────────────────────────────────────────────────
+// PANEL ESPEJO — completamente independiente del área principal
 // ══════════════════════════════════════════════════════════════════════
 async function loadMirror(user) {
-  stopMirrorPolling();
-  mirrorUser = user;
-
-  setActiveNav("nav-user-" + user);
-
+  stopMirrorTimer();
+  mirrorUser  = user;
+  mirrorCount = 0;
+  const mc    = document.getElementById("mirrorChat");
+  const me    = document.getElementById("mirrorEmpty");
+  const eb    = document.getElementById("mirrorBtnExpand");
+  if (!mc) return;
+  mc.innerHTML = "";
   try {
-    const res  = await fetch(API_URL + "/history/" + user);
-    const hist = await res.json();
-    const mirror = document.getElementById("mirrorChat");
-    const empty  = document.getElementById("mirrorEmpty");
-    if (!mirror) return;
-
-    mirror.innerHTML = "";
+    const hist = await apiFetch("/history/" + user);
     if (hist.length) {
-      if (empty) empty.style.display = "none";
+      if (me) me.style.display = "none";
       hist.forEach(m => {
-        const q = document.createElement("div");
-        q.className = "mirror-msg-user";
-        q.innerText = m.message;
-        const a = document.createElement("div");
-        a.className = "mirror-msg-bot";
-        renderRichInto(a, m.reply);
-        mirror.appendChild(q);
-        mirror.appendChild(a);
+        const q = document.createElement("div"); q.className = "mirror-msg-user"; q.textContent = m.message;
+        const a = document.createElement("div"); a.className = "mirror-msg-bot"; renderRichInto(a, m.reply);
+        mc.appendChild(q); mc.appendChild(a);
       });
-      mirror.scrollTop = mirror.scrollHeight;
+      mc.scrollTop = mc.scrollHeight;
+      mirrorCount = hist.length;
     } else {
-      if (empty) empty.style.display = "flex";
+      if (me) { me.style.display = "flex"; me.querySelector("p").textContent = `${user} aún no tiene mensajes.`; }
     }
-
-    const expandBtn = document.getElementById("mirrorBtnExpand");
-    if (expandBtn) expandBtn.style.display = "inline-flex";
-    mirrorMsgCount = hist.length;
-    startMirrorPolling(user);
   } catch (_) {}
+  if (eb) eb.style.display = "inline-flex";
+  startMirrorTimer(user);
 }
 
-function handleMirrorUpdate(ev) {
-  if (ev.actor !== mirrorUser) return;
-  const mirror = document.getElementById("mirrorChat");
-  const empty  = document.getElementById("mirrorEmpty");
-  if (!mirror) return;
-  if (empty) empty.style.display = "none";
-  mirrorMsgCount++;
-  const q = document.createElement("div");
-  q.className = "mirror-msg-user mirror-new"; q.innerText = ev.message;
-  const a = document.createElement("div");
-  a.className = "mirror-msg-bot mirror-new";
-  renderRichInto(a, ev.reply);
-  mirror.appendChild(q); mirror.appendChild(a);
-  mirror.scrollTop = mirror.scrollHeight;
+function appendToMirror(message, reply) {
+  const mc = document.getElementById("mirrorChat");
+  const me = document.getElementById("mirrorEmpty");
+  if (!mc) return;
+  if (me) me.style.display = "none";
+  mirrorCount++;
+  const q = document.createElement("div"); q.className = "mirror-msg-user mirror-new"; q.textContent = message;
+  const a = document.createElement("div"); a.className = "mirror-msg-bot mirror-new"; renderRichInto(a, reply);
+  mc.appendChild(q); mc.appendChild(a);
+  mc.scrollTop = mc.scrollHeight;
 }
 
-function startMirrorPolling(user) {
-  stopMirrorPolling();
-  mirrorPollTimer = setInterval(async () => {
+function startMirrorTimer(user) {
+  mirrorTimer = setInterval(async () => {
     try {
-      const res  = await fetch(API_URL + "/history/" + user);
-      const hist = await res.json();
-      if (hist.length <= mirrorMsgCount) return;
-      const newItems = hist.slice(mirrorMsgCount);
-      mirrorMsgCount = hist.length;
-      const mirror = document.getElementById("mirrorChat");
-      const empty  = document.getElementById("mirrorEmpty");
-      if (!mirror) return;
-      if (empty) empty.style.display = "none";
-      newItems.forEach(m => {
-        const q = document.createElement("div"); q.className = "mirror-msg-user mirror-new"; q.innerText = m.message;
-        const a = document.createElement("div"); a.className = "mirror-msg-bot mirror-new"; renderRichInto(a, m.reply);
-        mirror.appendChild(q); mirror.appendChild(a);
-      });
-      mirror.scrollTop = mirror.scrollHeight;
+      const hist = await apiFetch("/history/" + user);
+      if (hist.length > mirrorCount) {
+        hist.slice(mirrorCount).forEach(m => appendToMirror(m.message, m.reply));
+        mirrorCount = hist.length;
+      }
     } catch (_) {}
   }, 2500);
 }
+function stopMirrorTimer() { if (mirrorTimer) { clearInterval(mirrorTimer); mirrorTimer = null; } }
 
-function stopMirrorPolling() {
-  if (mirrorPollTimer) { clearInterval(mirrorPollTimer); mirrorPollTimer = null; }
-}
-
-// ── Vista expandida del espejo ─────────────────────────────────────────
+// Vista expandida
 function openExpandedView() {
   if (!mirrorUser) return;
   const existing = document.getElementById("expandedOverlay");
   if (existing) existing.remove();
-
   const overlay = document.createElement("div");
   overlay.id = "expandedOverlay"; overlay.className = "expanded-overlay";
   overlay.onclick = e => { if (e.target === overlay) closeExpandedView(); };
   overlay.innerHTML = `
     <div class="expanded-panel">
       <div class="expanded-header">
-        <div>
-          <div class="panel-label">VISTA EXTENDIDA · ${mirrorUser.toUpperCase()}</div>
-        </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn-icon-sm" onclick="refreshExpandedView()">
+        <span class="panel-label">ESPEJO · ${mirrorUser.toUpperCase()}</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn-icon-sm" onclick="refreshExpanded()">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           </button>
           <button class="btn-ghost-sm" onclick="closeExpandedView()">
@@ -568,30 +393,26 @@ function openExpandedView() {
         </div>
       </div>
       <div class="expanded-messages" id="expandedMessages"></div>
-    </div>
-  `;
+    </div>`;
   document.body.appendChild(overlay);
-  refreshExpandedView();
-  overlay._poll = setInterval(refreshExpandedView, 3000);
+  refreshExpanded();
+  overlay._poll = setInterval(refreshExpanded, 3000);
   requestAnimationFrame(() => overlay.classList.add("open"));
 }
-
-async function refreshExpandedView() {
+async function refreshExpanded() {
   try {
-    const res  = await fetch(API_URL + "/history/" + mirrorUser);
-    const hist = await res.json();
-    const container = document.getElementById("expandedMessages");
-    if (!container) return;
-    container.innerHTML = "";
+    const hist = await apiFetch("/history/" + mirrorUser);
+    const c = document.getElementById("expandedMessages");
+    if (!c) return;
+    c.innerHTML = "";
     hist.forEach(m => {
-      const u = document.createElement("div"); u.className = "expanded-bubble user"; u.innerText = m.message;
+      const u = document.createElement("div"); u.className = "expanded-bubble user"; u.textContent = m.message;
       const b = document.createElement("div"); b.className = "expanded-bubble bot"; renderRichInto(b, m.reply);
-      container.appendChild(u); container.appendChild(b);
+      c.appendChild(u); c.appendChild(b);
     });
-    container.scrollTop = container.scrollHeight;
+    c.scrollTop = c.scrollHeight;
   } catch (_) {}
 }
-
 function closeExpandedView() {
   const el = document.getElementById("expandedOverlay");
   if (!el) return;
@@ -601,205 +422,174 @@ function closeExpandedView() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// ── RENDER ────────────────────────────────────────────────────────────
+// RENDER — burbujas área principal
 // ══════════════════════════════════════════════════════════════════════
-function appendUserBubble(container, text, actor) {
+function addUserBubble(container, text, actor) {
   const isMe = actor === username;
   const wrap = document.createElement("div");
   wrap.className = "msg-row " + (isMe ? "mine" : "theirs");
+  if (!isMe) { const l = document.createElement("div"); l.className = "msg-actor"; l.textContent = actor; wrap.appendChild(l); }
+  const b = document.createElement("div"); b.className = "bubble user"; b.textContent = text;
+  wrap.appendChild(b); container.appendChild(wrap); scrollBottom(container);
+}
+function addBotBubble(container, raw) {
+  const wrap = document.createElement("div"); wrap.className = "msg-row bot-row";
+  const b    = document.createElement("div"); b.className = "bubble bot";
+  renderRichInto(b, raw); wrap.appendChild(b); container.appendChild(wrap); scrollBottom(container);
+}
+function addLoader(container) {
+  const d = document.createElement("div"); d.className = "msg-row bot-row";
+  d.innerHTML = '<div class="bubble bot"><span class="loader-dot"></span></div>';
+  container.appendChild(d); scrollBottom(container); return d;
+}
 
-  if (!isMe) {
-    const label = document.createElement("div");
-    label.className = "msg-actor"; label.innerText = actor;
-    wrap.appendChild(label);
+// ── Burbujas DM ────────────────────────────────────────────────────────
+function addDMBubble(container, text, from, isMe, ts) {
+  const now  = ts || Date.now() / 1000;
+  const prev = container.lastElementChild;
+  const group = prev?.classList.contains("dm-group")
+             && prev?.dataset?.author === from
+             && (now - parseFloat(prev.dataset.ts || 0)) < 120;
+
+  if (group) {
+    const inner  = prev.querySelector(".dm-group-inner");
+    const bubble = document.createElement("div");
+    bubble.className = `dm-bubble ${isMe ? "dm-bubble-mine" : "dm-bubble-theirs"} dm-stacked`;
+    bubble.textContent = text;
+    inner.appendChild(bubble);
+    prev.dataset.ts = now;
+  } else {
+    const wrap = document.createElement("div");
+    wrap.className      = "dm-group " + (isMe ? "dm-group-mine" : "dm-group-theirs");
+    wrap.dataset.author = from;
+    wrap.dataset.ts     = now;
+
+    if (!isMe) { const av = document.createElement("div"); av.className = "dm-avatar"; av.textContent = from[0].toUpperCase(); wrap.appendChild(av); }
+
+    const inner = document.createElement("div"); inner.className = "dm-group-inner";
+    if (!isMe) { const name = document.createElement("div"); name.className = "dm-sender"; name.textContent = from; inner.appendChild(name); }
+
+    const bubble = document.createElement("div");
+    bubble.className = `dm-bubble ${isMe ? "dm-bubble-mine" : "dm-bubble-theirs"}`;
+    bubble.textContent = text;
+    inner.appendChild(bubble);
+    wrap.appendChild(inner);
+    container.appendChild(wrap);
   }
-
-  const bubble = document.createElement("div");
-  bubble.className = "bubble user"; bubble.innerText = text;
-  wrap.appendChild(bubble);
-  container.appendChild(wrap);
-  scrollToBottom(container);
+  scrollBottom(container);
 }
 
-function appendBotBubble(container, raw) {
-  const wrap = document.createElement("div");
-  wrap.className = "msg-row bot-row";
-  const bubble = document.createElement("div");
-  bubble.className = "bubble bot";
-  renderRichInto(bubble, raw);
-  wrap.appendChild(bubble);
-  container.appendChild(wrap);
-  scrollToBottom(container);
-}
-
-function appendLoader(container) {
-  const d = document.createElement("div");
-  d.className = "msg-row bot-row";
-  d.innerHTML = '<div class="bubble bot loader-bubble"><span class="loader-dot"></span></div>';
-  container.appendChild(d);
-  scrollToBottom(container);
-  return d;
-}
-
-function scrollToBottom(el) {
-  if (el) el.scrollTop = el.scrollHeight;
-}
-
-// Rich content
+// ── Rich content ────────────────────────────────────────────────────────
 function renderRichInto(container, raw) {
-  parseRichContent(raw).forEach(part => {
-    if (part.type === "text" && part.content.trim()) {
-      const p = document.createElement("p");
-      p.className = "bot-text"; p.innerText = part.content.trim();
-      container.appendChild(p);
-    } else if (part.type === "table")    container.appendChild(renderTable(part.content));
-    else if (part.type === "widget")     container.appendChild(renderWidget(part.title, part.content));
-    else if (part.type === "download")   container.appendChild(renderDownload(part.filename, part.content));
+  parseRich(raw).forEach(part => {
+    if      (part.type === "text" && part.content.trim()) { const p = document.createElement("p"); p.className = "bot-text"; p.textContent = part.content.trim(); container.appendChild(p); }
+    else if (part.type === "table")    container.appendChild(buildTable(part.content));
+    else if (part.type === "widget")   container.appendChild(buildWidget(part.title, part.content));
+    else if (part.type === "download") container.appendChild(buildDownload(part.filename, part.content));
   });
 }
-
-function parseRichContent(raw) {
-  const parts = [], regex = /<table>([\s\S]*?)<\/table>|<widget title="([^"]*)">([\s\S]*?)<\/widget>|<download filename="([^"]*)">([\s\S]*?)<\/download>/g;
+function parseRich(raw) {
+  const parts = [], re = /<table>([\s\S]*?)<\/table>|<widget title="([^"]*)">([\s\S]*?)<\/widget>|<download filename="([^"]*)">([\s\S]*?)<\/download>/g;
   let last = 0, m;
-  while ((m = regex.exec(raw)) !== null) {
+  while ((m = re.exec(raw)) !== null) {
     if (m.index > last) parts.push({ type:"text", content: raw.slice(last, m.index) });
-    if      (m[1] !== undefined) parts.push({ type:"table",    content: m[1].trim() });
-    else if (m[2] !== undefined) parts.push({ type:"widget",   title: m[2], content: m[3].trim() });
-    else if (m[4] !== undefined) parts.push({ type:"download", filename: m[4], content: m[5] });
-    last = regex.lastIndex;
+    if      (m[1]!==undefined) parts.push({ type:"table", content: m[1].trim() });
+    else if (m[2]!==undefined) parts.push({ type:"widget", title: m[2], content: m[3].trim() });
+    else if (m[4]!==undefined) parts.push({ type:"download", filename: m[4], content: m[5] });
+    last = re.lastIndex;
   }
   if (last < raw.length) parts.push({ type:"text", content: raw.slice(last) });
   return parts;
 }
-
-function renderTable(raw) {
+function buildTable(raw) {
   const wrap = document.createElement("div"); wrap.className = "rich-table-wrap";
   const tbl  = document.createElement("table"); tbl.className = "rich-table";
-  raw.split("\n").filter(l => l.trim()).forEach((line, i) => {
+  raw.split("\n").filter(l=>l.trim()).forEach((line,i) => {
     const row = document.createElement("tr");
-    line.split("|").map(c => c.trim()).forEach(cell => {
-      const td = document.createElement(i === 0 ? "th" : "td"); td.innerText = cell; row.appendChild(td);
-    });
+    line.split("|").map(c=>c.trim()).forEach(cell => { const td = document.createElement(i===0?"th":"td"); td.textContent=cell; row.appendChild(td); });
     tbl.appendChild(row);
   });
   wrap.appendChild(tbl); return wrap;
 }
-
-function renderWidget(title, content) {
+function buildWidget(title, content) {
   const d = document.createElement("div"); d.className = "rich-widget";
-  d.innerHTML = `<div class="widget-title">${title}</div><div class="widget-body">${content}</div>`;
+  d.innerHTML = `<div class="widget-title">${title}</div><div class="widget-body">${content}</div>`; return d;
+}
+function buildDownload(filename, content) {
+  const ext=filename.split(".").pop().toLowerCase(), binary=["docx","xlsx","pptx"].includes(ext);
+  const fn=binary?filename.replace(/\.[^.]+$/,".txt"):filename;
+  const mime={txt:"text/plain",csv:"text/csv",md:"text/markdown",json:"application/json",html:"text/html"}[fn.split(".").pop()]||"text/plain";
+  const url=URL.createObjectURL(new Blob([content],{type:mime}));
+  const d=document.createElement("div"); d.className="rich-download";
+  d.innerHTML=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    <a href="${url}" download="${fn}" class="download-link">${fn}</a>
+    <span class="download-size">${(content.length/1024).toFixed(1)} KB</span>
+    ${binary?`<span class="download-warning">⚠ Convertido a .txt</span>`:""}`;
   return d;
 }
 
-function renderDownload(filename, content) {
-  const div = document.createElement("div"); div.className = "rich-download";
-  const ext = filename.split(".").pop().toLowerCase();
-  const isBinary = ["docx","xlsx","pptx"].includes(ext);
-  const fn  = isBinary ? filename.replace(/\.(docx|xlsx|pptx)$/, ".txt") : filename;
-  const mime = {txt:"text/plain",csv:"text/csv",md:"text/markdown",json:"application/json",html:"text/html"}[fn.split(".").pop()] || "text/plain";
-  const url = URL.createObjectURL(new Blob([content], {type: mime}));
-  div.innerHTML = `
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-    <a href="${url}" download="${fn}" class="download-link">${fn}</a>
-    <span class="download-size">${(content.length/1024).toFixed(1)} KB</span>
-    ${isBinary ? `<span class="download-warning">⚠ Guardado como .txt</span>` : ""}
-  `;
-  return div;
-}
-
-// ── Toast ──────────────────────────────────────────────────────────────
-function showToast(text) {
-  const t = document.createElement("div");
-  t.className = "toast"; t.innerText = text;
-  document.body.appendChild(t);
-  requestAnimationFrame(() => t.classList.add("show"));
-  setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 350); }, 4000);
-}
-
-// ── Canales: modal ─────────────────────────────────────────────────────
-function openCreateChannelModal() {
-  document.getElementById("createChannelModal").classList.add("open");
-  document.getElementById("channelNameInput").focus();
-}
-
-function closeCreateChannelModal() {
-  document.getElementById("createChannelModal").classList.remove("open");
-  document.getElementById("channelNameInput").value = "";
-}
-
+// ══════════════════════════════════════════════════════════════════════
+// MODALES
+// ══════════════════════════════════════════════════════════════════════
+function openCreateChannelModal() { document.getElementById("createChannelModal").classList.add("open"); setTimeout(()=>document.getElementById("channelNameInput").focus(),50); }
+function closeCreateChannelModal() { document.getElementById("createChannelModal").classList.remove("open"); document.getElementById("channelNameInput").value=""; }
 async function createChannel() {
   const name = document.getElementById("channelNameInput").value.trim();
   if (!name) return;
-  const res  = await fetch(API_URL + "/channels", {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ user: username, name })
-  });
-  const data = await res.json();
-  if (data.error) { alert(data.error); return; }
-  closeCreateChannelModal();
-  await loadChannels();
-  switchToChannel(data.id);
-}
-
-document.getElementById("createChannelModal").addEventListener("click", function(e) {
-  if (e.target === this) closeCreateChannelModal();
-});
-document.getElementById("channelNameInput")?.addEventListener("keydown", e => {
-  if (e.key === "Enter") createChannel();
-});
-
-// ── Upload ─────────────────────────────────────────────────────────────
-function getPersonality() { return document.getElementById("personality").value; }
-
-async function uploadFile() {
-  const fi = document.getElementById("fileUpload");
-  if (!fi.files.length) return;
-  const fd = new FormData();
-  fd.append("file", fi.files[0]);
-  fd.append("user", username);
-  const res = await fetch(API_URL + "/upload", { method:"POST", body: fd });
-  const fn  = document.getElementById("fileName");
-  if (res.ok) fn.innerText = "📎 " + fi.files[0].name;
-  else { alert("Tipo de archivo no soportado"); fn.innerText = ""; }
-}
-
-// ── Personalidad ───────────────────────────────────────────────────────
-const PRESET_LABELS = {normal:"Normal",analyst:"Analista",creative:"Creativo",strict:"Estricto",dev:"Dev",coach:"Coach"};
-
-async function loadPersonalityModal() {
   try {
-    const res  = await fetch(API_URL + "/personality/" + username);
-    const data = await res.json();
-    document.getElementById("customPersonality").value = data.custom || "";
-    const chips = document.getElementById("presetChips");
-    chips.innerHTML = "";
-    Object.entries(data.presets).forEach(([key, text]) => {
-      const chip = document.createElement("button");
-      chip.className = "preset-chip"; chip.innerText = PRESET_LABELS[key] || key;
-      chip.onclick   = () => { document.getElementById("customPersonality").value = text; };
-      chips.appendChild(chip);
-    });
-  } catch (_) {}
+    const data = await apiFetch("/channels","POST",{user:username,name});
+    if (data.error){alert(data.error);return;}
+    closeCreateChannelModal(); await loadChannels(); renderChannel(data.id);
+  } catch(_){alert("Error al crear el canal");}
+}
+document.getElementById("createChannelModal").addEventListener("click",function(e){if(e.target===this)closeCreateChannelModal();});
+document.getElementById("channelNameInput")?.addEventListener("keydown",e=>{if(e.key==="Enter")createChannel();});
+
+const PRESET_LABELS={normal:"Normal",analyst:"Analista",creative:"Creativo",strict:"Estricto",dev:"Dev",coach:"Coach"};
+async function loadPersonalityModal(){
+  try{
+    const data=await apiFetch("/personality/"+username);
+    document.getElementById("customPersonality").value=data.custom||"";
+    const chips=document.getElementById("presetChips"); chips.innerHTML="";
+    Object.entries(data.presets||{}).forEach(([key,text])=>{const c=document.createElement("button");c.className="preset-chip";c.textContent=PRESET_LABELS[key]||key;c.onclick=()=>{document.getElementById("customPersonality").value=text;};chips.appendChild(c);});
+  }catch(_){}
+}
+function openPersonalityModal(){document.getElementById("personalityModal").classList.add("open");loadPersonalityModal();}
+function closePersonalityModal(){document.getElementById("personalityModal").classList.remove("open");}
+async function savePersonality(){const custom=document.getElementById("customPersonality").value.trim();await apiFetch("/personality/"+username,"POST",{custom});if(custom)document.getElementById("personality").value="custom";closePersonalityModal();}
+async function clearPersonality(){document.getElementById("customPersonality").value="";await apiFetch("/personality/"+username,"DELETE");}
+document.getElementById("personalityModal").addEventListener("click",function(e){if(e.target===this)closePersonalityModal();});
+
+async function uploadFile(){
+  const fi=document.getElementById("fileUpload"); if(!fi.files.length)return;
+  const fd=new FormData(); fd.append("file",fi.files[0]); fd.append("user",username);
+  const res=await fetch(API_URL+"/upload",{method:"POST",body:fd});
+  const fn=document.getElementById("fileName");
+  fn.textContent=res.ok?"📎 "+fi.files[0].name:""; if(!res.ok)alert("Tipo no soportado");
 }
 
-function openPersonalityModal()  { document.getElementById("personalityModal").classList.add("open"); loadPersonalityModal(); }
-function closePersonalityModal() { document.getElementById("personalityModal").classList.remove("open"); }
-
-async function savePersonality() {
-  const custom = document.getElementById("customPersonality").value.trim();
-  await fetch(API_URL + "/personality/" + username, {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ custom })
-  });
-  if (custom) document.getElementById("personality").value = "custom";
-  closePersonalityModal();
+// ══════════════════════════════════════════════════════════════════════
+// UTILS
+// ══════════════════════════════════════════════════════════════════════
+function getArea()        { return document.getElementById("messagesArea"); }
+function getPersonality() { return document.getElementById("personality").value; }
+function scrollBottom(el) { if(el) el.scrollTop = el.scrollHeight; }
+function setHeader(iconHTML, title, sub, actionsHTML) {
+  document.getElementById("headerIcon").innerHTML    = iconHTML;
+  document.getElementById("headerTitle").textContent = title;
+  document.getElementById("headerSub").textContent   = sub;
+  document.getElementById("headerActions").innerHTML = actionsHTML||"";
 }
-
-async function clearPersonality() {
-  document.getElementById("customPersonality").value = "";
-  await fetch(API_URL + "/personality/" + username, { method:"DELETE" });
+function showToast(text) {
+  const t=document.createElement("div"); t.className="toast"; t.textContent=text;
+  document.body.appendChild(t);
+  requestAnimationFrame(()=>t.classList.add("show"));
+  setTimeout(()=>{t.classList.remove("show");setTimeout(()=>t.remove(),350);},4000);
 }
-
-document.getElementById("personalityModal").addEventListener("click", function(e) {
-  if (e.target === this) closePersonalityModal();
-});
+async function apiFetch(path, method="GET", body=null) {
+  const opts={method,headers:{}};
+  if(body){opts.headers["Content-Type"]="application/json";opts.body=JSON.stringify(body);}
+  const res=await fetch(API_URL+path,opts);
+  if(!res.ok) throw new Error("HTTP "+res.status);
+  return res.json();
+}
