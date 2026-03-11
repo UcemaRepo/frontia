@@ -600,3 +600,97 @@ body {
   opacity:0; pointer-events:none;
 }
 .toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
+
+/* ══════════════════════════════════════════════
+   MENSAJES DIRECTOS
+══════════════════════════════════════════════ */
+
+/* Badge de no leídos en el sidebar */
+.dm-unread {
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  background: var(--danger);
+  color: white;
+  font-size: 9px; font-weight: 700;
+  border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Botón de espejo dentro del user card */
+.mirror-btn { display: none !important; }
+.sidebar-item:hover .mirror-btn { display: flex !important; }
+
+/* Separador de inicio de conversación */
+.dm-start-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 32px 0 28px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+
+.dm-start-avatar {
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  background: var(--user-bubble);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-head);
+  font-size: 26px; font-weight: 700;
+  color: white;
+  margin-bottom: 4px;
+}
+
+.dm-start-name {
+  font-family: var(--font-head);
+  font-size: 22px; font-weight: 700;
+  color: var(--text);
+}
+
+.dm-start-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* Mensajes del DM */
+.dm-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 68%;
+  animation: fadeUp 0.15s ease;
+  margin-bottom: 2px;
+}
+.dm-mine   { align-self: flex-end; align-items: flex-end; }
+.dm-theirs { align-self: flex-start; align-items: flex-start; margin-bottom: 6px; }
+
+.dm-sender {
+  font-size: 10px; font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 3px 2px;
+}
+
+.dm-bubble {
+  padding: 9px 14px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.dm-bubble-mine {
+  background: var(--user-bubble);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.dm-bubble-theirs {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
