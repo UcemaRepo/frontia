@@ -292,7 +292,7 @@ async function switchToDM(otherUser) {
   try {
     const res  = await fetch(`${API_URL}/dm/${otherUser}?user=${encodeURIComponent(username)}`);
     const msgs = await res.json();
-    msgs.forEach(m => appendDMBubble(area, m.message, m.from, m.from === username));
+    msgs.forEach(m => appendDMBubble(area, m.message, m.from, m.from === username, m.ts));
     scrollToBottom(area);
   } catch (_) {}
 }
@@ -312,21 +312,51 @@ async function sendDM(otherUser, message) {
   }
 }
 
-function appendDMBubble(container, text, from, isMe) {
-  const wrap = document.createElement("div");
-  wrap.className = "dm-msg " + (isMe ? "dm-mine" : "dm-theirs");
+function appendDMBubble(container, text, from, isMe, ts) {
+  // Agrupar con el mensaje anterior si es del mismo autor y < 2 min
+  const prev = container.lastElementChild;
+  const sameAuthor = prev && prev.dataset.author === from
+                     && (Date.now()/1000 - (parseFloat(prev.dataset.ts)||0)) < 120;
 
-  if (!isMe) {
-    const name = document.createElement("div");
-    name.className = "dm-sender"; name.innerText = from;
-    wrap.appendChild(name);
+  if (!sameAuthor) {
+    const wrap = document.createElement("div");
+    wrap.className = "dm-group " + (isMe ? "dm-group-mine" : "dm-group-theirs");
+    wrap.dataset.author = from;
+    wrap.dataset.ts     = ts || Date.now()/1000;
+
+    if (!isMe) {
+      const avatar = document.createElement("div");
+      avatar.className = "dm-group-avatar";
+      avatar.innerText = from[0].toUpperCase();
+      wrap.appendChild(avatar);
+    }
+
+    const inner = document.createElement("div");
+    inner.className = "dm-group-inner";
+
+    if (!isMe) {
+      const name = document.createElement("div");
+      name.className = "dm-sender"; name.innerText = from;
+      inner.appendChild(name);
+    }
+
+    const bubble = document.createElement("div");
+    bubble.className = "dm-bubble " + (isMe ? "dm-bubble-mine" : "dm-bubble-theirs");
+    bubble.innerText = text;
+    inner.appendChild(bubble);
+
+    wrap.appendChild(inner);
+    container.appendChild(wrap);
+  } else {
+    // Mismo autor — agregar burbuja al grupo existente
+    const inner = prev.querySelector(".dm-group-inner");
+    const bubble = document.createElement("div");
+    bubble.className = "dm-bubble " + (isMe ? "dm-bubble-mine" : "dm-bubble-theirs") + " dm-bubble-stacked";
+    bubble.innerText = text;
+    inner.appendChild(bubble);
+    prev.dataset.ts = ts || Date.now()/1000;
   }
 
-  const bubble = document.createElement("div");
-  bubble.className = "dm-bubble " + (isMe ? "dm-bubble-mine" : "dm-bubble-theirs");
-  bubble.innerText = text;
-  wrap.appendChild(bubble);
-  container.appendChild(wrap);
   scrollToBottom(container);
 }
 
