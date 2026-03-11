@@ -1,31 +1,35 @@
 const API_URL = "https://backendia-khz7.onrender.com";
 
-// ── Estado global ──────────────────────────────────────
-let mirrorHistory    = [];
+// ── Estado global ──────────────────────────────────────────────────────
 let mirrorUser       = null;
-let chatOwner        = null;   // si != null, estamos dentro del chat de otra persona
+let chatOwner        = null;    // si != null, estamos DENTRO del chat efímero de otro
 let lastActivityTime = Date.now();
-let lastEventTs      = 0;      // timestamp del último evento procesado (chat compartido)
-let eventPollTimer   = null;   // polling cuando estás DENTRO del chat de otro
-let mirrorPollTimer  = null;   // polling del panel espejo (solo observando)
-let mirrorMsgCount   = 0;      // cuántos mensajes había al cargar el espejo
+let lastEventTs      = 0;       // ts del último evento procesado (chat compartido)
+let myLastEventTs    = 0;       // ts para polling de NUESTROS PROPIOS eventos (dueño)
+let eventPollTimer   = null;    // polling cuando sos visitante en un chat compartido
+let ownerPollTimer   = null;    // polling cuando sos DUEÑO y hay visita activa
+let mirrorPollTimer  = null;    // polling pasivo del panel espejo
+let mirrorMsgCount   = 0;
 
-// ── Usuario ────────────────────────────────────────────
+// ── Usuario ────────────────────────────────────────────────────────────
 let username = localStorage.getItem("username");
 if (!username) {
-  username = prompt("Ingresá tu nombre");
-  localStorage.setItem("username", username);
+  username = prompt("Ingresá tu nombre de usuario");
+  if (username) localStorage.setItem("username", username);
 }
 document.getElementById("username").innerText = username;
 
-// ── Init ───────────────────────────────────────────────
+// ── Init ───────────────────────────────────────────────────────────────
 loadUsers();
 loadMyHistory();
 loadPersonalityModal();
 setInterval(sendHeartbeat, 20000);
 setInterval(loadUsers, 5000);
 
-// ── Actividad ──────────────────────────────────────────
+// Polling del dueño: ver si alguien entró a mi chat y me manda mensajes
+setInterval(pollOwnEvents, 2500);
+
+// ── Actividad ──────────────────────────────────────────────────────────
 ["mousemove", "keydown", "click", "scroll"].forEach(evt =>
   document.addEventListener(evt, () => { lastActivityTime = Date.now(); })
 );
@@ -44,7 +48,6 @@ async function sendHeartbeat() {
 }
 
 window.addEventListener("beforeunload", () => {
-  // Avisar que salimos del chat compartido si estábamos en uno
   if (chatOwner) {
     navigator.sendBeacon(API_URL + "/leave-chat",
       new Blob([JSON.stringify({ user: username, owner: chatOwner })],
@@ -55,7 +58,7 @@ window.addEventListener("beforeunload", () => {
              { type: "application/json" }));
 });
 
-// ── Resize textarea ────────────────────────────────────
+// ── Resize textarea ────────────────────────────────────────────────────
 const messageInput = document.getElementById("message");
 messageInput.addEventListener("input", function () {
   this.style.height = "auto";
@@ -68,24 +71,21 @@ messageInput.addEventListener("keydown", function (e) {
 
 document.getElementById("fileUpload").addEventListener("change", function () {
   document.getElementById("fileName").innerText = this.files[0]?.name || "Sin archivo";
+  uploadFile();
 });
 
-// ── Enviar mensaje ─────────────────────────────────────
+// ── Enviar mensaje — chat propio (permanente) ──────────────────────────
 async function sendMessage() {
   const input   = document.getElementById("message");
   const message = input.value.trim();
   if (!message) return;
 
   lastActivityTime = Date.now();
-  // El chat principal SIEMPRE es el propio - chatOwner solo aplica al panel espejo
   addMessage("user", message);
   input.value = "";
   input.style.height = "auto";
 
-  const loader = document.createElement("div");
-  loader.className = "loader";
-  document.getElementById("chat").appendChild(loader);
-  document.getElementById("chat").scrollTop = 99999;
+  const loader = addLoader(document.getElementById("chat"));
 
   const res = await fetch(API_URL + "/chat", {
     method: "POST",
@@ -93,24 +93,60 @@ async function sendMessage() {
     body: JSON.stringify({
       message,
       user:        username,
-      personality: document.getElementById("personality").value,
-      chat_owner:  null   // siempre nulo: el chat principal es siempre el propio
+      personality: document.getElementById("personality").value
     })
   });
 
   const data = await res.json();
   loader.remove();
-  renderBotMessage(data.reply);
-
-  // Notificar a quienes tengan tu chat abierto en el espejo
-  fetch(API_URL + "/notify-message", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ owner: username, actor: username })
-  }).catch(() => {});
+  renderBotMessage(data.reply, document.getElementById("chat"));
 }
 
-// ── Renderizado de mensajes ────────────────────────────
+// ── Enviar mensaje — chat efímero compartido ───────────────────────────
+async function sendSharedMessage() {
+  const input   = document.getElementById("sharedMessage");
+  const message = input.value.trim();
+  if (!message || !chatOwner) return;
+
+  input.value = "";
+  input.style.height = "auto";
+
+  const container = document.getElementById("mirrorChat");
+  appendSharedMessage(username, message, null); // optimista sin reply aún
+  const loader = addLoader(container);
+
+  const res = await fetch(API_URL + "/shared-chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message,
+      user:        username,
+      owner:       chatOwner,
+      personality: document.getElementById("personality").value
+    })
+  });
+
+  const data = await res.json();
+  loader.remove();
+
+  // Reemplazar el último mensaje sin reply con el reply real
+  const allBotWraps = container.querySelectorAll(".shared-msg-bot-wrap");
+  const last = allBotWraps[allBotWraps.length - 1];
+  if (last && last.dataset.pending) {
+    last.removeAttribute("data-pending");
+    renderRichInto(last, data.reply);
+  }
+}
+
+// ── Helpers de renderizado ─────────────────────────────────────────────
+function addLoader(container) {
+  const loader = document.createElement("div");
+  loader.className = "loader";
+  container.appendChild(loader);
+  container.scrollTop = container.scrollHeight;
+  return loader;
+}
+
 function addMessage(type, text, authorLabel = null) {
   const chat = document.getElementById("chat");
   const wrap = document.createElement("div");
@@ -132,11 +168,17 @@ function addMessage(type, text, authorLabel = null) {
   chat.scrollTop = chat.scrollHeight;
 }
 
-function renderBotMessage(raw) {
-  const chat      = document.getElementById("chat");
-  const container = document.createElement("div");
-  container.className = "message bot";
+function renderBotMessage(raw, container) {
+  container = container || document.getElementById("chat");
+  const div = document.createElement("div");
+  div.className = "message bot";
+  renderRichInto(div, raw);
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
 
+// Renderiza rich content en cualquier contenedor
+function renderRichInto(container, raw) {
   parseRichContent(raw).forEach(part => {
     if (part.type === "text" && part.content.trim()) {
       const p = document.createElement("p");
@@ -151,24 +193,18 @@ function renderBotMessage(raw) {
       container.appendChild(renderDownload(part.filename, part.content));
     }
   });
-
-  chat.appendChild(container);
-  chat.scrollTop = chat.scrollHeight;
 }
 
 function parseRichContent(raw) {
   const parts = [];
   const regex = /<table>([\s\S]*?)<\/table>|<widget title="([^"]*)">([\s\S]*?)<\/widget>|<download filename="([^"]*)">([\s\S]*?)<\/download>/g;
   let lastIndex = 0, match;
-
   while ((match = regex.exec(raw)) !== null) {
     if (match.index > lastIndex)
       parts.push({ type: "text", content: raw.slice(lastIndex, match.index) });
-
-    if (match[1] !== undefined)      parts.push({ type: "table",    content: match[1].trim() });
+    if      (match[1] !== undefined) parts.push({ type: "table",    content: match[1].trim() });
     else if (match[2] !== undefined) parts.push({ type: "widget",   title: match[2], content: match[3].trim() });
     else if (match[4] !== undefined) parts.push({ type: "download", filename: match[4], content: match[5] });
-
     lastIndex = regex.lastIndex;
   }
   if (lastIndex < raw.length) parts.push({ type: "text", content: raw.slice(lastIndex) });
@@ -202,382 +238,56 @@ function renderWidget(title, content) {
 
 function getMimeType(filename) {
   const ext = filename.split(".").pop().toLowerCase();
-  const types = {
-    "txt":  "text/plain",
-    "csv":  "text/csv",
-    "md":   "text/markdown",
-    "json": "application/json",
-    "html": "text/html",
-    "xml":  "application/xml",
-    // Word/Excel/PowerPoint: NO se generan como texto — forzar txt con aviso
-    "docx": null,
-    "xlsx": null,
-    "pptx": null,
-  };
-  return types[ext] !== undefined ? types[ext] : "text/plain";
+  const types = { txt: "text/plain", csv: "text/csv", md: "text/markdown",
+                  json: "application/json", html: "text/html", xml: "application/xml" };
+  return types[ext] || "text/plain";
 }
 
 function renderDownload(filename, content) {
-  const div  = document.createElement("div");
+  const div = document.createElement("div");
   div.className = "rich-download";
 
   const ext      = filename.split(".").pop().toLowerCase();
   const isBinary = ["docx","xlsx","pptx"].includes(ext);
-
-  // Si la IA intentó generar un formato binario, redirigir a .txt con aviso
-  let finalFilename = filename;
-  let finalContent  = content;
-  let warningMsg    = null;
-
-  if (isBinary) {
-    finalFilename = filename.replace(/\.(docx|xlsx|pptx)$/, ".txt");
-    finalContent  = content;
-    warningMsg    = `⚠️ El contenido fue guardado como .txt — para generar un ${ext} real, pedile al bot que exporte como CSV o HTML.`;
-  }
-
-  const mime = getMimeType(finalFilename);
-  const blob = new Blob([finalContent], { type: mime });
-  const url  = URL.createObjectURL(blob);
+  const finalFilename = isBinary ? filename.replace(/\.(docx|xlsx|pptx)$/, ".txt") : filename;
+  const blob   = new Blob([content], { type: getMimeType(finalFilename) });
+  const url    = URL.createObjectURL(blob);
   const sizeKB = (blob.size / 1024).toFixed(1);
 
   const svgNS = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(svgNS, "svg");
-  svg.setAttribute("width", "14"); svg.setAttribute("height", "14");
-  svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "2");
-  const p1 = document.createElementNS(svgNS, "path");
-  p1.setAttribute("d", "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4");
-  const p2 = document.createElementNS(svgNS, "polyline"); p2.setAttribute("points", "7,10 12,15 17,10");
-  const p3 = document.createElementNS(svgNS, "line");
-  p3.setAttribute("x1", "12"); p3.setAttribute("y1", "15");
-  p3.setAttribute("x2", "12"); p3.setAttribute("y2", "3");
+  svg.setAttribute("width","14"); svg.setAttribute("height","14");
+  svg.setAttribute("viewBox","0 0 24 24"); svg.setAttribute("fill","none");
+  svg.setAttribute("stroke","currentColor"); svg.setAttribute("stroke-width","2");
+  const p1 = document.createElementNS(svgNS,"path"); p1.setAttribute("d","M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4");
+  const p2 = document.createElementNS(svgNS,"polyline"); p2.setAttribute("points","7,10 12,15 17,10");
+  const p3 = document.createElementNS(svgNS,"line"); p3.setAttribute("x1","12"); p3.setAttribute("y1","15"); p3.setAttribute("x2","12"); p3.setAttribute("y2","3");
   svg.appendChild(p1); svg.appendChild(p2); svg.appendChild(p3);
 
   const link = document.createElement("a");
-  link.href = url; link.download = filename;
-  link.className = "download-link"; link.innerText = filename;
+  link.href = url; link.download = finalFilename;
+  link.className = "download-link"; link.innerText = finalFilename;
 
   const size = document.createElement("span");
   size.className = "download-size"; size.innerText = sizeKB + " KB";
 
   div.appendChild(svg); div.appendChild(link); div.appendChild(size);
+
+  if (isBinary) {
+    const warn = document.createElement("div");
+    warn.className = "download-warning";
+    warn.innerText = `⚠️ Guardado como .txt — para generar un ${ext} real pedile al bot que use .csv o .html`;
+    div.appendChild(warn);
+  }
   return div;
 }
 
-// ── Evento visual en el chat ───────────────────────────
-function addEventBanner(text) {
-  const chat = document.getElementById("chat");
-  const div  = document.createElement("div");
-  div.className = "event-banner";
-  div.innerText = text;
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-}
-
-// ── Polling de eventos (cuando estás en un chat compartido) ────────────
-function startEventPolling(owner) {
-  stopEventPolling();
-  lastEventTs = Date.now() / 1000;
-  // Guardar cuántos mensajes había al entrar para saber desde dónde agregar
-  fetch(API_URL + "/history/" + owner)
-    .then(r => r.json())
-    .then(h => { window._sharedMsgCount = h.length; });
-
-  eventPollTimer = setInterval(async () => {
-    try {
-      const res    = await fetch(`${API_URL}/events/${owner}?since=${lastEventTs}`);
-      const events = await res.json();
-      events.forEach(ev => {
-        lastEventTs = Math.max(lastEventTs, ev.ts);
-        if (ev.actor === username) return; // ignorar los propios
-
-        if (ev.type === "join") {
-          appendSharedEvent(`${ev.actor} se unió al chat`);
-          updateSharedChatHeader(owner);
-        } else if (ev.type === "leave") {
-          appendSharedEvent(`${ev.actor} salió del chat`);
-          updateSharedChatHeader(owner);
-        } else if (ev.type === "message") {
-          refreshSharedPanel(owner);
-        }
-      });
-    } catch (_) {}
-  }, 3000);
-}
-
-function stopEventPolling() {
-  if (eventPollTimer) { clearInterval(eventPollTimer); eventPollTimer = null; }
-  window._sharedMsgCount = 0;
-}
-
-// Recargar solo los mensajes nuevos en el panel espejo
-async function refreshSharedPanel(owner) {
-  const res     = await fetch(API_URL + "/history/" + owner);
-  const history = await res.json();
-  if (!history.length) return;
-
-  const known = window._sharedMsgCount || 0;
-  const newItems = history.slice(known);
-  window._sharedMsgCount = history.length;
-
-  newItems.forEach(m => {
-    const actor = m.actor || owner;
-    if (actor !== username) {
-      appendSharedMessage(actor, m.message, m.reply);
-    }
-  });
-}
-
-// ── Usuarios ───────────────────────────────────────────
-async function loadUsers() {
-  const res   = await fetch(API_URL + "/users");
-  const users = await res.json();
-
-  const list  = document.getElementById("usersList");
-  list.innerHTML = "";
-
-  const onlineCount = users.filter(u => u.status === "online").length;
-  document.getElementById("onlineCount").innerText = onlineCount + " en línea";
-
-  const order = { online: 0, away: 1, offline: 2 };
-  users.sort((a, b) => order[a.status] - order[b.status]);
-
-  users.forEach(u => {
-    const card = document.createElement("div");
-    card.className = "userCard" + (u.name === mirrorUser ? " active" : "");
-    card.onclick   = () => loadMirror(u.name);
-
-    const dot = document.createElement("span");
-    dot.className = `statusDot ${u.status}`;
-    dot.title     = { online: "En línea", away: "Ausente", offline: "Desconectado" }[u.status];
-
-    const name = document.createElement("span");
-    name.className = "userName";
-    name.innerText = u.name;
-
-    const badge = document.createElement("span");
-    badge.className = `status-badge ${u.status}`;
-    badge.innerText = { online: "online", away: "ausente", offline: "offline" }[u.status];
-
-    card.appendChild(dot); card.appendChild(name); card.appendChild(badge);
-    list.appendChild(card);
-  });
-}
-
-// ── Mirror ─────────────────────────────────────────────
-async function loadMirror(user) {
-  stopMirrorPolling(); // detener polling del usuario anterior si había uno
-  mirrorUser = user;
-
-  const res     = await fetch(API_URL + "/history/" + user);
-  const history = await res.json();
-  mirrorHistory = history;
-
-  const mirror = document.getElementById("mirrorChat");
-  const empty  = document.getElementById("mirrorEmpty");
-  mirror.innerHTML = "";
-
-  if (!history.length) { empty.style.display = "flex"; }
-  else {
-    empty.style.display = "none";
-    history.forEach(m => {
-      const actor = m.actor || user;
-      const q = document.createElement("div");
-      q.className = "mirror-msg-user";
-      q.innerText = (actor !== user ? `[${actor}] ` : "") + m.message;
-
-      const a = document.createElement("div");
-      a.className = "mirror-msg-bot";
-      renderRichInto(a, m.reply);   // rich rendering completo
-
-      mirror.appendChild(q); mirror.appendChild(a);
-    });
-    mirror.scrollTop = mirror.scrollHeight;
-  }
-
-  document.getElementById("mirrorBtnJoin").style.display   = "inline-flex";
-  document.getElementById("mirrorBtnExpand").style.display = "inline-flex";
-  mirrorMsgCount = history.length;
-
-  // Arrancar polling pasivo: actualiza el espejo sin que el usuario se haya unido
-  startMirrorPolling(user);
-  loadUsers();
-}
-
-function startMirrorPolling(user) {
-  stopMirrorPolling();
-  mirrorPollTimer = setInterval(async () => {
-    if (chatOwner) return; // si ya estamos dentro, el eventPollTimer se ocupa
-    try {
-      const res     = await fetch(API_URL + "/history/" + user);
-      const history = await res.json();
-      if (history.length <= mirrorMsgCount) return;
-
-      const newItems = history.slice(mirrorMsgCount);
-      mirrorMsgCount = history.length;
-
-      const mirror = document.getElementById("mirrorChat");
-      const empty  = document.getElementById("mirrorEmpty");
-      empty.style.display = "none";
-
-      newItems.forEach(m => {
-        const actor = m.actor || user;
-        const q = document.createElement("div");
-        q.className = "mirror-msg-user mirror-new";
-        q.innerText = (actor !== user ? "[" + actor + "] " : "") + m.message;
-
-        const a = document.createElement("div");
-        a.className = "mirror-msg-bot mirror-new";
-        renderRichInto(a, m.reply);   // rich rendering también en el espejo pasivo
-
-        mirror.appendChild(q);
-        mirror.appendChild(a);
-      });
-      mirror.scrollTop = mirror.scrollHeight;
-    } catch (_) {}
-  }, 2500);
-}
-
-function stopMirrorPolling() {
-  if (mirrorPollTimer) { clearInterval(mirrorPollTimer); mirrorPollTimer = null; }
-}
-
-// ── Unirse al chat de otro usuario ────────────────────
-async function joinChat() {
-  if (!mirrorUser) return;
-
-  chatOwner = mirrorUser;
-
-  // Notificar al backend → genera evento "join" visible para el dueño
-  await fetch(API_URL + "/join-chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user: username, owner: chatOwner })
-  });
-
-  // Transformar el panel espejo en chat compartido interactivo
-  renderSharedChatPanel(chatOwner);
-
-  // Cargar historial en el panel espejo
-  const res     = await fetch(API_URL + "/history/" + chatOwner);
-  const history = await res.json();
-  populateSharedChat(history, chatOwner);
-
-  // Indicar en el header del panel espejo quién está conectado
-  updateSharedChatHeader(chatOwner);
-
-  // Iniciar polling de eventos (mensajes nuevos, join/leave de otros)
-  startEventPolling(chatOwner);
-}
-
-async function leaveChat() {
-  if (!chatOwner) return;
-
-  await fetch(API_URL + "/leave-chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user: username, owner: chatOwner })
-  });
-
-  chatOwner = null;
-  stopEventPolling();
-
-  // Restaurar el panel espejo al estado original
-  restoreMirrorPanel();
-}
-
-// ── Render del panel espejo como chat compartido ───────
-function renderSharedChatPanel(owner) {
-  const panel = document.querySelector(".mirror-panel");
-
-  // Header del panel con título + presencia + botón expandir + botón salir
-  panel.querySelector(".panel-header").innerHTML = `
-    <div class="shared-header-left">
-      <span class="panel-label">CHAT DE ${owner.toUpperCase()}</span>
-      <div class="shared-presence" id="sharedPresence"></div>
-    </div>
-    <div style="display:flex;gap:6px;align-items:center;">
-      <button class="btn-expand" onclick="openExpandedView('${owner}')" title="Pantalla extendida">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
-      </button>
-      <button class="btn-leave" onclick="leaveChat()">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        Salir
-      </button>
-    </div>
-  `;
-
-  // Área de mensajes del chat compartido
-  const mirrorChat = document.getElementById("mirrorChat");
-  mirrorChat.innerHTML = "";
-  mirrorChat.className = "shared-chat-messages";
-
-  // Input del chat compartido
-  let sharedInput = document.getElementById("sharedInputArea");
-  if (!sharedInput) {
-    sharedInput = document.createElement("div");
-    sharedInput.id = "sharedInputArea";
-    sharedInput.className = "shared-input-area";
-    sharedInput.innerHTML = `
-      <textarea id="sharedMessage" placeholder="Escribir en el chat de ${owner}..." rows="1"></textarea>
-      <button class="btn-send-shared" onclick="sendSharedMessage()">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/></svg>
-      </button>
-    `;
-    panel.appendChild(sharedInput);
-
-    // Auto-resize del textarea compartido
-    const ta = sharedInput.querySelector("#sharedMessage");
-    ta.addEventListener("input", function() {
-      this.style.height = "auto";
-      this.style.height = Math.min(this.scrollHeight, 80) + "px";
-    });
-    ta.addEventListener("keydown", function(e) {
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendSharedMessage(); }
-    });
-  }
-
-  document.getElementById("mirrorEmpty").style.display = "none";
-}
-
-function restoreMirrorPanel() {
-  const panel = document.querySelector(".mirror-panel");
-
-  // Restaurar header original
-  panel.querySelector(".panel-header").innerHTML = `
-    <span class="panel-label">VISTA ESPEJO</span>
-    <button class="btn-join" id="mirrorBtnJoin" style="display:none" onclick="joinChat()">Unirme</button>
-  `;
-
-  // Restaurar chat espejo
-  const mirrorChat = document.getElementById("mirrorChat");
-  mirrorChat.className = "";
-  mirrorChat.innerHTML = "";
-
-  // Eliminar input compartido
-  const sharedInput = document.getElementById("sharedInputArea");
-  if (sharedInput) sharedInput.remove();
-
-  // Restaurar estado vacío
-  document.getElementById("mirrorEmpty").style.display = "flex";
-  mirrorUser = null;
-}
-
-function populateSharedChat(history, owner) {
-  const container = document.getElementById("mirrorChat");
-  container.innerHTML = "";
-  history.forEach(m => {
-    const actor = m.actor || owner;
-    appendSharedMessage(actor, m.message, m.reply);
-  });
-  container.scrollTop = container.scrollHeight;
-}
-
+// ── Chat compartido: mensajes ──────────────────────────────────────────
 function appendSharedMessage(actor, message, reply) {
   const container = document.getElementById("mirrorChat");
-  const isMe      = actor === username;
+  if (!container) return;
+  const isMe = actor === username;
 
-  // Burbuja del usuario
   const wrap = document.createElement("div");
   wrap.className = "shared-msg-wrap " + (isMe ? "mine" : "theirs");
 
@@ -594,35 +304,21 @@ function appendSharedMessage(actor, message, reply) {
   wrap.appendChild(bubble);
   container.appendChild(wrap);
 
-  // Respuesta del bot con rich rendering completo
+  // Burbuja del bot
   const botWrap = document.createElement("div");
   botWrap.className = "shared-msg-bot-wrap";
-  renderRichInto(botWrap, reply);
+  if (!reply) {
+    botWrap.dataset.pending = "1";
+  } else {
+    renderRichInto(botWrap, reply);
+  }
   container.appendChild(botWrap);
-
   container.scrollTop = container.scrollHeight;
-}
-
-// Renderiza rich content (tablas, widgets, downloads) dentro de cualquier contenedor
-function renderRichInto(container, raw) {
-  parseRichContent(raw).forEach(part => {
-    if (part.type === "text" && part.content.trim()) {
-      const p = document.createElement("p");
-      p.className = "shared-bot-text";
-      p.innerText = part.content.trim();
-      container.appendChild(p);
-    } else if (part.type === "table") {
-      container.appendChild(renderTable(part.content));
-    } else if (part.type === "widget") {
-      container.appendChild(renderWidget(part.title, part.content));
-    } else if (part.type === "download") {
-      container.appendChild(renderDownload(part.filename, part.content));
-    }
-  });
 }
 
 function appendSharedEvent(text) {
   const container = document.getElementById("mirrorChat");
+  if (!container) return;
   const div = document.createElement("div");
   div.className = "shared-event";
   div.innerText = text;
@@ -630,60 +326,345 @@ function appendSharedEvent(text) {
   container.scrollTop = container.scrollHeight;
 }
 
-async function updateSharedChatHeader(owner) {
-  // Mostrar quién está en este chat (via /users que tiene presencia)
+// ── Polling: DUEÑO escucha sus propios eventos (visitantes entrando/escribiendo) ──
+async function pollOwnEvents() {
+  if (!username) return;
+  try {
+    const res    = await fetch(`${API_URL}/events/${username}?since=${myLastEventTs}`);
+    const events = await res.json();
+    events.forEach(ev => {
+      myLastEventTs = Math.max(myLastEventTs, ev.ts);
+      if (ev.actor === username) return; // ignorar los propios
+
+      if (ev.type === "join") {
+        // Alguien entró a mi chat → mostrar aviso en MI chat principal
+        addEventBannerToChat(`${ev.actor} se unió a tu chat`);
+      } else if (ev.type === "leave") {
+        addEventBannerToChat(`${ev.actor} salió de tu chat`);
+      } else if (ev.type === "session_ended") {
+        addEventBannerToChat("La sesión compartida fue cerrada");
+      } else if (ev.type === "shared_message") {
+        // Un visitante escribió en mi sesión → mostrarlo en el panel espejo si lo tengo abierto
+        // Y también en MI chat principal como aviso
+        addEventBannerToChat(`${ev.actor}: "${ev.text}"`);
+        // Si tengo el panel espejo abierto en modo compartido (soy el dueño viendo su sesión)
+        refreshSharedPanelIfOwner();
+      }
+    });
+  } catch (_) {}
+}
+
+function addEventBannerToChat(text) {
+  const chat = document.getElementById("chat");
+  const div  = document.createElement("div");
+  div.className = "event-banner";
+  div.innerText = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+// ── Polling: VISITANTE escucha eventos del chat que está usando ────────
+function startEventPolling(owner) {
+  stopEventPolling();
+  lastEventTs = Date.now() / 1000;
+
+  eventPollTimer = setInterval(async () => {
+    try {
+      const res    = await fetch(`${API_URL}/events/${username}?since=${lastEventTs}`);
+      const events = await res.json();
+      events.forEach(ev => {
+        lastEventTs = Math.max(lastEventTs, ev.ts);
+        if (ev.actor === username) return;
+
+        if (ev.type === "join") {
+          appendSharedEvent(`${ev.actor} se unió al chat`);
+        } else if (ev.type === "leave") {
+          appendSharedEvent(`${ev.actor} salió del chat`);
+        } else if (ev.type === "session_ended") {
+          appendSharedEvent("El dueño cerró la sesión");
+          leaveChat();
+        } else if (ev.type === "shared_message") {
+          // Otro participante escribió → agregar al panel compartido
+          appendSharedMessage(ev.actor, ev.text, ev.reply);
+        }
+      });
+    } catch (_) {}
+  }, 2500);
+}
+
+function stopEventPolling() {
+  if (eventPollTimer) { clearInterval(eventPollTimer); eventPollTimer = null; }
+}
+
+// ── Polling pasivo del espejo (solo observando, sin unirse) ───────────
+function startMirrorPolling(user) {
+  stopMirrorPolling();
+  mirrorPollTimer = setInterval(async () => {
+    if (chatOwner) return; // si estamos dentro del shared, el eventPollTimer se encarga
+    try {
+      const res     = await fetch(API_URL + "/history/" + user);
+      const history = await res.json();
+      if (history.length <= mirrorMsgCount) return;
+
+      const newItems = history.slice(mirrorMsgCount);
+      mirrorMsgCount = history.length;
+
+      const mirror = document.getElementById("mirrorChat");
+      const empty  = document.getElementById("mirrorEmpty");
+      if (empty) empty.style.display = "none";
+
+      newItems.forEach(m => {
+        const actor = m.actor || user;
+        const q = document.createElement("div");
+        q.className = "mirror-msg-user mirror-new";
+        q.innerText = (actor !== user ? `[${actor}] ` : "") + m.message;
+
+        const a = document.createElement("div");
+        a.className = "mirror-msg-bot mirror-new";
+        renderRichInto(a, m.reply);
+
+        mirror.appendChild(q);
+        mirror.appendChild(a);
+      });
+      if (mirror) mirror.scrollTop = mirror.scrollHeight;
+    } catch (_) {}
+  }, 2500);
+}
+
+function stopMirrorPolling() {
+  if (mirrorPollTimer) { clearInterval(mirrorPollTimer); mirrorPollTimer = null; }
+}
+
+async function refreshSharedPanelIfOwner() {
+  // Si soy el dueño y tengo el panel espejo en modo compartido, refrescar
+  if (!chatOwner && mirrorUser) {
+    // Ver si hay sesión activa para mí como dueño
+    try {
+      const res     = await fetch(API_URL + "/shared-history/" + username);
+      const history = await res.json();
+      if (!history.length) return;
+      // Renderizar mensajes nuevos en el mirror si está en modo compartido
+      // (esto se maneja por el polling pasivo)
+    } catch (_) {}
+  }
+}
+
+// ── Usuarios ───────────────────────────────────────────────────────────
+async function loadUsers() {
   const res   = await fetch(API_URL + "/users");
   const users = await res.json();
 
-  // Mostrar participantes activos: el dueño + quien se unió
+  const list = document.getElementById("usersList");
+  list.innerHTML = "";
+
+  const onlineCount = users.filter(u => u.status === "online").length;
+  document.getElementById("onlineCount").innerText = onlineCount + " en línea";
+
+  const order = { online: 0, away: 1, offline: 2 };
+  users.sort((a, b) => order[a.status] - order[b.status]);
+
+  users.forEach(u => {
+    if (u.name === username) return; // no mostrarme a mí mismo
+    const card = document.createElement("div");
+    card.className = "userCard" + (u.name === mirrorUser ? " active" : "");
+    card.onclick   = () => loadMirror(u.name);
+
+    const dot = document.createElement("span");
+    dot.className = `statusDot ${u.status}`;
+
+    const name = document.createElement("span");
+    name.className = "userName";
+    name.innerText = u.name;
+
+    const badge = document.createElement("span");
+    badge.className = `status-badge ${u.status}`;
+    badge.innerText = { online: "online", away: "ausente", offline: "offline" }[u.status];
+
+    card.appendChild(dot); card.appendChild(name); card.appendChild(badge);
+    list.appendChild(card);
+  });
+}
+
+// ── Mirror: cargar historial permanente ───────────────────────────────
+async function loadMirror(user) {
+  stopMirrorPolling();
+  mirrorUser = user;
+
+  const res     = await fetch(API_URL + "/history/" + user);
+  const history = await res.json();
+
+  const mirror = document.getElementById("mirrorChat");
+  const empty  = document.getElementById("mirrorEmpty");
+  mirror.innerHTML = "";
+  mirror.className = ""; // reset por si venía de shared mode
+
+  // Quitar input compartido si quedó de antes
+  const oldInput = document.getElementById("sharedInputArea");
+  if (oldInput) oldInput.remove();
+
+  // Restaurar header del panel espejo
+  document.querySelector(".mirror-panel .panel-header").innerHTML = `
+    <span class="panel-label">VISTA ESPEJO</span>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button class="btn-expand" id="mirrorBtnExpand" style="display:none" onclick="openExpandedView()" title="Pantalla extendida">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+      </button>
+      <button class="btn-join" id="mirrorBtnJoin" style="display:none" onclick="joinChat()">Unirme</button>
+    </div>
+  `;
+
+  if (!history.length) {
+    empty.style.display = "flex";
+  } else {
+    empty.style.display = "none";
+    history.forEach(m => {
+      const actor = m.actor || user;
+      const q = document.createElement("div");
+      q.className = "mirror-msg-user";
+      q.innerText = (actor !== user ? `[${actor}] ` : "") + m.message;
+      const a = document.createElement("div");
+      a.className = "mirror-msg-bot";
+      renderRichInto(a, m.reply);
+      mirror.appendChild(q); mirror.appendChild(a);
+    });
+    mirror.scrollTop = mirror.scrollHeight;
+  }
+
+  document.getElementById("mirrorBtnJoin").style.display   = "inline-flex";
+  document.getElementById("mirrorBtnExpand").style.display = "inline-flex";
+  mirrorMsgCount = history.length;
+
+  startMirrorPolling(user);
+  loadUsers();
+}
+
+// ── Unirse al chat compartido (efímero) ───────────────────────────────
+async function joinChat() {
+  if (!mirrorUser) return;
+  chatOwner = mirrorUser;
+
+  // Llamar al backend → crea la sesión efímera y notifica al dueño
+  const res  = await fetch(API_URL + "/join-chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user: username, owner: chatOwner })
+  });
+  const data = await res.json();
+
+  // Transformar el panel espejo en chat compartido
+  renderSharedChatPanel(chatOwner);
+
+  // Cargar historial efímero de la sesión (vacío si acaba de empezar)
+  const sessionHistory = data.history || [];
+  sessionHistory.forEach(m => appendSharedMessage(m.actor, m.message, m.reply));
+
+  updateSharedChatHeader(chatOwner);
+  startEventPolling(chatOwner);
+}
+
+async function leaveChat() {
+  if (!chatOwner) return;
+  const owner = chatOwner;
+  chatOwner = null;
+  stopEventPolling();
+
+  await fetch(API_URL + "/leave-chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user: username, owner })
+  }).catch(() => {});
+
+  restoreMirrorPanel();
+}
+
+// ── Render del panel espejo como chat compartido ──────────────────────
+function renderSharedChatPanel(owner) {
+  stopMirrorPolling(); // dejar de hacer polling pasivo
+
+  const panel = document.querySelector(".mirror-panel");
+
+  panel.querySelector(".panel-header").innerHTML = `
+    <div class="shared-header-left">
+      <span class="panel-label">CHAT DE ${owner.toUpperCase()}</span>
+      <div class="shared-presence" id="sharedPresence"></div>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button class="btn-expand" onclick="openExpandedView('${owner}')" title="Pantalla extendida">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+      </button>
+      <button class="btn-leave" onclick="leaveChat()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Salir
+      </button>
+    </div>
+  `;
+
+  const mirrorChat = document.getElementById("mirrorChat");
+  mirrorChat.innerHTML = "";
+  mirrorChat.className = "shared-chat-messages";
+
+  let sharedInput = document.getElementById("sharedInputArea");
+  if (!sharedInput) {
+    sharedInput = document.createElement("div");
+    sharedInput.id = "sharedInputArea";
+    sharedInput.className = "shared-input-area";
+    sharedInput.innerHTML = `
+      <textarea id="sharedMessage" placeholder="Escribir en el chat de ${owner}..." rows="1"></textarea>
+      <button class="btn-send-shared" onclick="sendSharedMessage()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/></svg>
+      </button>
+    `;
+    panel.appendChild(sharedInput);
+
+    const ta = sharedInput.querySelector("#sharedMessage");
+    ta.addEventListener("input", function() {
+      this.style.height = "auto";
+      this.style.height = Math.min(this.scrollHeight, 80) + "px";
+    });
+    ta.addEventListener("keydown", function(e) {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendSharedMessage(); }
+    });
+  }
+
+  document.getElementById("mirrorEmpty").style.display = "none";
+}
+
+function restoreMirrorPanel() {
+  const panel = document.querySelector(".mirror-panel");
+
+  panel.querySelector(".panel-header").innerHTML = `
+    <span class="panel-label">VISTA ESPEJO</span>
+    <button class="btn-join" id="mirrorBtnJoin" style="display:none" onclick="joinChat()">Unirme</button>
+  `;
+
+  const mirrorChat = document.getElementById("mirrorChat");
+  mirrorChat.className = "";
+  mirrorChat.innerHTML = "";
+
+  const sharedInput = document.getElementById("sharedInputArea");
+  if (sharedInput) sharedInput.remove();
+
+  document.getElementById("mirrorEmpty").style.display = "flex";
+  mirrorUser = null;
+}
+
+async function updateSharedChatHeader(owner) {
   const presence = document.getElementById("sharedPresence");
   if (!presence) return;
-
-  // Por ahora mostramos al menos el nombre del dueño y el nuestro
   presence.innerHTML = `
     <span class="presence-dot online"></span>${owner}
     <span class="presence-dot online" style="margin-left:8px"></span>${username}
   `;
 }
 
-// ── Enviar mensaje en el chat compartido ──────────────
-async function sendSharedMessage() {
-  const input   = document.getElementById("sharedMessage");
-  const message = input.value.trim();
-  if (!message || !chatOwner) return;
-
-  input.value = "";
-  input.style.height = "auto";
-
-  // Mostrar optimista en el espejo
-  const loader = document.createElement("div");
-  loader.className = "shared-loader";
-  loader.innerText = "IA escribiendo...";
-  document.getElementById("mirrorChat").appendChild(loader);
-  document.getElementById("mirrorChat").scrollTop = 99999;
-
-  const res = await fetch(API_URL + "/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message,
-      user:        username,
-      personality: document.getElementById("personality").value,
-      chat_owner:  chatOwner
-    })
-  });
-
-  const data = await res.json();
-  loader.remove();
-  appendSharedMessage(username, message, data.reply);
-}
-
+// ── Historial propio ───────────────────────────────────────────────────
 async function loadMyHistory() {
   const res     = await fetch(API_URL + "/history/" + username);
   const history = await res.json();
+  const chat    = document.getElementById("chat");
   history.forEach(m => {
     addMessage("user", m.message);
-    renderBotMessage(m.reply);
+    renderBotMessage(m.reply, chat);
   });
 }
 
@@ -693,7 +674,7 @@ async function deleteMyChat() {
   document.getElementById("chat").innerHTML = "";
 }
 
-// ── Upload ─────────────────────────────────────────────
+// ── Upload ─────────────────────────────────────────────────────────────
 async function uploadFile() {
   const fileInput = document.getElementById("fileUpload");
   if (!fileInput.files.length) return;
@@ -705,14 +686,13 @@ async function uploadFile() {
   else alert("Tipo de archivo no soportado");
 }
 
-// ── Pantalla extendida (expanded view) ───────────────
+// ── Pantalla extendida ─────────────────────────────────────────────────
 let expandedUser = null;
 
 function openExpandedView(user) {
-  expandedUser = user || mirrorUser;
+  expandedUser = user || mirrorUser || chatOwner;
   if (!expandedUser) return;
 
-  // Crear overlay
   const overlay = document.createElement("div");
   overlay.id        = "expandedOverlay";
   overlay.className = "expanded-overlay";
@@ -739,17 +719,22 @@ function openExpandedView(user) {
 
   document.body.appendChild(overlay);
   loadExpandedHistory(expandedUser);
-
-  // Polling de actualización automática mientras está abierto
   overlay._pollTimer = setInterval(() => refreshExpandedView(), 3000);
-
-  // Animación de entrada
   requestAnimationFrame(() => overlay.classList.add("open"));
 }
 
 async function loadExpandedHistory(user) {
-  const res     = await fetch(API_URL + "/history/" + user);
-  const history = await res.json();
+  // Primero intentar sesión efímera, si no historial permanente
+  let history = [];
+  if (chatOwner === user) {
+    const res = await fetch(API_URL + "/shared-history/" + user);
+    history   = await res.json();
+  }
+  if (!history.length) {
+    const res = await fetch(API_URL + "/history/" + user);
+    history   = await res.json();
+  }
+
   const container = document.getElementById("expandedMessages");
   if (!container) return;
   container.innerHTML = "";
@@ -761,18 +746,15 @@ async function loadExpandedHistory(user) {
 
   history.forEach(m => {
     const actor = m.actor || user;
-
     const userDiv = document.createElement("div");
     userDiv.className = "expanded-user-msg";
     if (actor !== user) {
       const label = document.createElement("span");
-      label.className = "expanded-actor";
-      label.innerText = actor;
+      label.className = "expanded-actor"; label.innerText = actor;
       userDiv.appendChild(label);
     }
     const bubble = document.createElement("div");
-    bubble.className = "expanded-bubble";
-    bubble.innerText = m.message;
+    bubble.className = "expanded-bubble"; bubble.innerText = m.message;
     userDiv.appendChild(bubble);
 
     const botDiv = document.createElement("div");
@@ -782,7 +764,6 @@ async function loadExpandedHistory(user) {
     container.appendChild(userDiv);
     container.appendChild(botDiv);
   });
-
   container.scrollTop = container.scrollHeight;
 }
 
@@ -799,7 +780,7 @@ function closeExpandedView() {
   expandedUser = null;
 }
 
-// ── Modal de personalidad ──────────────────────────────
+// ── Modal de personalidad ──────────────────────────────────────────────
 const PRESET_LABELS = { normal: "Normal", analyst: "Analista", creative: "Creativo",
                         strict: "Estricto", dev: "Dev", coach: "Coach" };
 
@@ -837,6 +818,6 @@ async function clearPersonality() {
   await fetch(API_URL + "/personality/" + username, { method: "DELETE" });
 }
 
-document.getElementById("personalityModal").addEventListener("click", function (e) {
+document.getElementById("personalityModal").addEventListener("click", function(e) {
   if (e.target === this) closePersonalityModal();
 });
