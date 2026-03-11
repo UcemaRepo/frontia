@@ -33,6 +33,7 @@ function isUserActive() {
 }
 
 async function sendHeartbeat() {
+  if (!username) return;  // nunca mandar heartbeat sin usuario
   await fetch(API_URL + "/heartbeat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -42,10 +43,11 @@ async function sendHeartbeat() {
 
 // Marcar offline al cerrar la pestaña
 window.addEventListener("beforeunload", () => {
-  navigator.sendBeacon(
-    API_URL + "/offline",
-    JSON.stringify({ user: username })
+  const payload = new Blob(
+    [JSON.stringify({ user: username })],
+    { type: "application/json" }
   );
+  navigator.sendBeacon(API_URL + "/offline", payload);
 });
 
 // ── Auto-resize textarea ───────────────────────────────
