@@ -66,6 +66,8 @@ async function handleSend() {
     await sendPersonalMessage(msg);
   } else if (activeView.startsWith("channel:")) {
     await sendChannelMessage(activeView.slice(8), msg);
+  } else if (activeView.startsWith("dm:")) {
+    await sendDM(activeView.slice(3), msg);
   }
 }
 
@@ -228,11 +230,104 @@ async function pollMyEvents() {
           // Badge de notificación en el sidebar
           badgeChannel(ev.channel_id);
         }
+      } else if (ev.type === "dm") {
+        // Mensaje directo recibido
+        if (activeView === "dm:" + ev.actor) {
+          // Estamos en la conversación → mostrar en tiempo real
+          const area = document.getElementById("messagesArea");
+          appendDMBubble(area, ev.message, ev.actor, false);
+        } else {
+          // No estamos en la conv → badge en el sidebar
+          dmUnread[ev.actor] = (dmUnread[ev.actor] || 0) + 1;
+          const badge = document.getElementById("dm-badge-" + ev.actor);
+          if (badge) {
+            badge.innerText = dmUnread[ev.actor] > 9 ? "9+" : dmUnread[ev.actor];
+            badge.style.display = "inline-flex";
+          }
+          showToast(`💬 ${ev.actor}: ${ev.message.slice(0, 50)}`);
+        }
       } else if (ev.type === "mirror_update") {
         handleMirrorUpdate(ev);
       }
     });
   } catch (_) {}
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── VISTA: MENSAJES DIRECTOS (DM) ────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+async function switchToDM(otherUser) {
+  setActiveNav("nav-user-" + otherUser);
+  activeView = "dm:" + otherUser;
+
+  // Limpiar badge
+  dmUnread[otherUser] = 0;
+  const badge = document.getElementById("dm-badge-" + otherUser);
+  if (badge) badge.style.display = "none";
+
+  setHeader(
+    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+    otherUser,
+    "Mensaje directo · solo entre ustedes, sin IA",
+    `<button class="btn-icon-sm" onclick="loadMirror('${otherUser}')" title="Ver su chat con IA">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    </button>`
+  );
+
+  document.getElementById("messageInput").placeholder = `Mensaje directo a ${otherUser}...`;
+
+  const area = document.getElementById("messagesArea");
+  area.innerHTML = "";
+
+  // Separador visual de inicio
+  const sep = document.createElement("div");
+  sep.className = "dm-start-banner";
+  sep.innerHTML = `
+    <div class="dm-start-avatar">${otherUser[0].toUpperCase()}</div>
+    <div class="dm-start-name">${otherUser}</div>
+    <div class="dm-start-sub">Este es el inicio de tu conversación directa con <strong>${otherUser}</strong>.</div>
+  `;
+  area.appendChild(sep);
+
+  try {
+    const res  = await fetch(`${API_URL}/dm/${otherUser}?user=${encodeURIComponent(username)}`);
+    const msgs = await res.json();
+    msgs.forEach(m => appendDMBubble(area, m.message, m.from, m.from === username));
+    scrollToBottom(area);
+  } catch (_) {}
+}
+
+async function sendDM(otherUser, message) {
+  const area = document.getElementById("messagesArea");
+  appendDMBubble(area, message, username, true);
+
+  try {
+    await fetch(`${API_URL}/dm/${otherUser}`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ from: username, message })
+    });
+  } catch (_) {
+    showToast("Error al enviar el mensaje");
+  }
+}
+
+function appendDMBubble(container, text, from, isMe) {
+  const wrap = document.createElement("div");
+  wrap.className = "dm-msg " + (isMe ? "dm-mine" : "dm-theirs");
+
+  if (!isMe) {
+    const name = document.createElement("div");
+    name.className = "dm-sender"; name.innerText = from;
+    wrap.appendChild(name);
+  }
+
+  const bubble = document.createElement("div");
+  bubble.className = "dm-bubble " + (isMe ? "dm-bubble-mine" : "dm-bubble-theirs");
+  bubble.innerText = text;
+  wrap.appendChild(bubble);
+  container.appendChild(wrap);
+  scrollToBottom(container);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -254,12 +349,15 @@ async function loadUsers() {
       const id  = "nav-user-" + u.name;
       const el  = document.createElement("div");
       el.id        = id;
-      el.className = "sidebar-item" + (mirrorUser === u.name ? " active" : "");
-      el.onclick   = () => loadMirror(u.name);
+      el.className = "sidebar-item" + (activeView === "dm:" + u.name ? " active" : "");
+      el.onclick   = () => switchToDM(u.name);
       el.innerHTML = `
         <span class="status-dot ${u.status}"></span>
         <span class="item-label">${u.name}</span>
-        <span class="status-text">${{online:"",away:"ausente",offline:"offline"}[u.status]}</span>
+        <span class="dm-unread" id="dm-badge-${u.name}" style="display:none"></span>
+        <button class="item-action mirror-btn" title="Ver espejo" onclick="event.stopPropagation();loadMirror('${u.name}')">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        </button>
       `;
       list.appendChild(el);
     });
