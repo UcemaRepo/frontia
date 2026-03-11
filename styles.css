@@ -716,3 +716,38 @@ body {
 /* Última burbuja del grupo — recupera cola */
 .dm-group-mine .dm-group-inner .dm-bubble-mine:last-child     { border-radius: 18px 4px 4px 18px; }
 .dm-group-theirs .dm-group-inner .dm-bubble-theirs:last-child { border-radius: 4px 18px 18px 4px; }
+
+/* ── User card actions (DM + espejo) ── */
+.user-item { position: relative; }
+
+.user-item-actions {
+  display: none;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.sidebar-item.user-item:hover .user-item-actions { display: flex; }
+
+.user-action-btn {
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--text-dim);
+  transition: all 0.12s;
+  flex-shrink: 0;
+}
+.user-action-btn:hover { background: var(--surface3); color: var(--text); }
+.user-action-btn.dm-btn:hover { color: var(--accent); background: var(--accent-glow); }
+
+/* Avatar en header de DM */
+.dm-header-avatar {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: var(--user-bubble);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-head); font-size: 15px; font-weight: 700;
+  color: white; flex-shrink: 0;
+}
