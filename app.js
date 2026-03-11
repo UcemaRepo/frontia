@@ -490,16 +490,21 @@ async function leaveChat() {
 function renderSharedChatPanel(owner) {
   const panel = document.querySelector(".mirror-panel");
 
-  // Header del panel con título + presencia + botón salir
+  // Header del panel con título + presencia + botón expandir + botón salir
   panel.querySelector(".panel-header").innerHTML = `
     <div class="shared-header-left">
       <span class="panel-label">CHAT DE ${owner.toUpperCase()}</span>
       <div class="shared-presence" id="sharedPresence"></div>
     </div>
-    <button class="btn-leave" onclick="leaveChat()">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      Salir
-    </button>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button class="btn-expand" onclick="openExpandedView('${owner}')" title="Pantalla extendida">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+      </button>
+      <button class="btn-leave" onclick="leaveChat()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Salir
+      </button>
+    </div>
   `;
 
   // Área de mensajes del chat compartido
