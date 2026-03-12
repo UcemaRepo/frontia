@@ -105,8 +105,14 @@ async function sendToAI(message, files) {
   addUserBubble(area, message || "", username, files);
   const loader = addLoader(area);
   const fileDesc = files.length ? files.map(f => "[archivo: " + f.name + "]").join(" ") : "";
+  const filesPayload = files.map(f => ({ name: f.name, type: f.type, dataURL: f.dataURL }));
   try {
-    const data = await apiFetch("/chat", "POST", { message: message || fileDesc, user: username, personality: getPersonality() });
+    const data = await apiFetch("/chat", "POST", {
+      message: message || fileDesc,
+      user: username,
+      personality: getPersonality(),
+      files: filesPayload
+    });
     loader.remove(); addBotBubble(area, data.reply);
   } catch (_) { loader.remove(); addBotBubble(area, "Error al conectar."); }
 }
