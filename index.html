@@ -141,6 +141,17 @@
     <div class="modal-body">
       <p class="modal-desc">El canal es permanente y compartido. Solo vos podés borrarlo.</p>
       <input type="text" id="channelNameInput" class="text-input" placeholder="nombre-del-canal" maxlength="40" autocomplete="off">
+      <div class="ai-toggle-row">
+        <div class="ai-toggle-info">
+          <div class="ai-toggle-label">Agente IA activo</div>
+          <div class="ai-toggle-desc">El agente responde a cada mensaje del canal</div>
+        </div>
+        <button class="ai-toggle-btn active" id="aiToggleBtn" onclick="toggleAI()">
+          <span class="ai-toggle-track">
+            <span class="ai-toggle-thumb"></span>
+          </span>
+        </button>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" onclick="closeCreateChannelModal()">Cancelar</button>
