@@ -105,13 +105,23 @@ async function sendToAI(message, files) {
   addUserBubble(area, message || "", username, files);
   const loader = addLoader(area);
   const fileDesc = files.length ? files.map(f => "[archivo: " + f.name + "]").join(" ") : "";
-  const filesPayload = files.map(f => ({ name: f.name, type: f.type, dataURL: f.dataURL }));
+
+  // Separar imágenes de documentos
+  const imageFiles = files.filter(f => f.type.startsWith("image/"));
+  const docTexts   = files
+    .filter(f => f.extractedText)
+    .map(f => `[Archivo: ${f.name}]\n${f.extractedText}`)
+    .join("\n\n");
+
+  const filesPayload = imageFiles.map(f => ({ name: f.name, type: f.type, dataURL: f.dataURL }));
+
   try {
     const data = await apiFetch("/chat", "POST", {
       message: message || fileDesc,
       user: username,
       personality: getPersonality(),
-      files: filesPayload
+      files: filesPayload,
+      doc_context: docTexts || ""
     });
     loader.remove(); addBotBubble(area, data.reply);
   } catch (_) { loader.remove(); addBotBubble(area, "Error al conectar."); }
@@ -674,6 +684,9 @@ document.getElementById("personalityModal").addEventListener("click",function(e)
 
 // Lee archivo localmente SIN llamar al backend todavía
 // El backend solo recibe el base64 cuando se envía el mensaje
+const DOC_EXTS = [".xlsx", ".xls", ".pdf", ".txt", ".csv", ".md", ".json", ".html"];
+function isDocFile(name) { return DOC_EXTS.some(e => name.toLowerCase().endsWith(e)); }
+
 async function uploadFile() {
   const fi = document.getElementById("fileUpload");
   if (!fi.files.length) return;
@@ -681,6 +694,22 @@ async function uploadFile() {
   for (const file of fi.files) {
     const dataURL = await readFileAsDataURL(file);
     const fileObj = { name: file.name, type: file.type, size: file.size, dataURL };
+
+    // Para documentos extraer texto en el backend
+    if (isDocFile(file.name)) {
+      try {
+        showToast("⏳ Procesando " + file.name + "...");
+        const res = await apiFetch("/extract-file", "POST", { name: file.name, dataURL });
+        if (res.text) {
+          fileObj.extractedText = res.text;
+          fileObj.type = "document/extracted";
+          showToast("✅ " + file.name + " listo");
+        } else if (res.error) {
+          showToast("⚠️ " + res.error);
+        }
+      } catch (_) { showToast("⚠️ No se pudo procesar " + file.name); }
+    }
+
     pendingFiles.push(fileObj);
     renderFileChip(fileObj);
   }
