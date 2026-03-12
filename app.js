@@ -30,6 +30,7 @@ setInterval(pollEvents,    2500);
 loadUsers();
 loadChannels();
 renderPersonal();
+sheetsLoadStatus();
 
 ["mousemove","keydown","click","scroll"].forEach(ev =>
   document.addEventListener(ev, () => { lastActivity = Date.now(); }, { passive: true })
@@ -720,6 +721,83 @@ function renderFileChip(fileObj) {
   };
   chip.appendChild(rm);
   bar.appendChild(chip);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// GOOGLE SHEETS
+// ══════════════════════════════════════════════════════════════════════
+
+async function sheetsLoadStatus() {
+  try {
+    const data = await apiFetch(`/sheets/status?user=${encodeURIComponent(username)}`);
+    const statusEl      = document.getElementById("sheetsStatus");
+    const statusText    = document.getElementById("sheetsStatusText");
+    const connectBtn    = document.getElementById("sheetsConnectBtn");
+    const urlRow        = document.getElementById("sheetsUrlRow");
+    const disconnectBtn = document.getElementById("sheetsDisconnectBtn");
+    if (!statusEl) return;
+
+    if (data.connected) {
+      statusEl.className = "sheets-status connected";
+      statusText.textContent = `📊 ${data.sheet_name}`;
+      connectBtn.style.display    = "none";
+      urlRow.style.display        = "none";
+      disconnectBtn.style.display = "block";
+    } else {
+      statusEl.className = "sheets-status disconnected";
+      statusText.textContent = "Sin hoja conectada";
+      connectBtn.style.display    = "block";
+      disconnectBtn.style.display = "none";
+    }
+  } catch (_) {}
+}
+
+function sheetsConnect() {
+  // Abrir OAuth en popup
+  const popup = window.open(
+    `${API_URL}/sheets/connect?user=${encodeURIComponent(username)}`,
+    "google-oauth",
+    "width=500,height=650,scrollbars=yes"
+  );
+
+  // Escuchar mensaje del callback
+  const handler = async (e) => {
+    if (e.data?.type === "sheets_authed") {
+      window.removeEventListener("message", handler);
+      popup?.close();
+      // Mostrar campo para pegar URL de hoja
+      const urlRow     = document.getElementById("sheetsUrlRow");
+      const connectBtn = document.getElementById("sheetsConnectBtn");
+      if (urlRow)     urlRow.style.display = "flex";
+      if (connectBtn) connectBtn.style.display = "none";
+      showToast("✅ Google autenticado — pegá la URL de tu hoja");
+    } else if (e.data?.type === "sheets_error") {
+      window.removeEventListener("message", handler);
+      showToast("❌ Error al autenticar con Google");
+    }
+  };
+  window.addEventListener("message", handler);
+}
+
+async function sheetsLinkSheet() {
+  const input = document.getElementById("sheetsUrlInput");
+  const val   = input?.value.trim();
+  if (!val) return;
+  try {
+    const data = await apiFetch("/sheets/connect-sheet", "POST", {
+      user: username, sheet_url_or_id: val
+    });
+    if (data.error) { showToast("❌ " + data.error); return; }
+    showToast(`✅ Hoja "${data.sheet_name}" vinculada`);
+    sheetsLoadStatus();
+  } catch (_) { showToast("❌ No se pudo vincular la hoja"); }
+}
+
+async function sheetsDisconnect() {
+  if (!confirm("¿Desconectar tu hoja de Google Sheets?")) return;
+  await apiFetch("/sheets/disconnect", "POST", { user: username });
+  sheetsLoadStatus();
+  showToast("Hoja desconectada");
 }
 
 // ══════════════════════════════════════════════════════════════════════
