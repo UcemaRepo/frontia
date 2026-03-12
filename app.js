@@ -145,7 +145,7 @@ async function renderDM(otherUser) {
 
   try {
     const msgs = await apiFetch(`/dm/${otherUser}?user=${encodeURIComponent(username)}`);
-    msgs.forEach(m => addDMBubble(area, m.message, m.from, m.from === username, m.ts));
+    msgs.forEach(m => addDMBubble(area, m.message, m.from, m.from === username, m.ts, m.files || []));
     scrollBottom(area);
   } catch (_) {}
 }
@@ -155,7 +155,9 @@ async function sendDM(otherUser, message, files) {
   const text = message || fileDesc;
   addDMBubble(getArea(), message, username, true, null, files);
   try {
-    await apiFetch(`/dm/${otherUser}`, "POST", { from: username, message: text });
+    // Enviar archivos como base64 al backend para que lleguen al otro usuario
+    const filesPayload = files.map(f => ({ name: f.name, type: f.type, dataURL: f.dataURL }));
+    await apiFetch(`/dm/${otherUser}`, "POST", { from: username, message: text, files: filesPayload });
   } catch (_) { showToast("Error al enviar"); }
 }
 
@@ -180,7 +182,7 @@ async function renderChannel(channelId) {
   msgInput.placeholder = `Escribir en #${ch.name}...`;
   const area = getArea();
   area.innerHTML = "";
-  (ch.messages || []).forEach(m => { addUserBubble(area, m.message, m.actor); if (m.reply) addBotBubble(area, m.reply); });
+  (ch.messages || []).forEach(m => { addUserBubble(area, m.message, m.actor, m.files || []); if (m.reply) addBotBubble(area, m.reply); });
   scrollBottom(area);
 }
 
@@ -190,8 +192,9 @@ async function sendToChannel(channelId, message, files) {
   addUserBubble(area, message, username, files);
   const loader = addLoader(area);
   try {
+    const filesPayload = files.map(f => ({ name: f.name, type: f.type, dataURL: f.dataURL }));
     const data = await apiFetch(`/channels/${channelId}/chat`, "POST",
-      { message: message || fileDesc, user: username, personality: getPersonality() });
+      { message: message || fileDesc, user: username, personality: getPersonality(), files: filesPayload });
     loader.remove();
     if (data.reply) addBotBubble(area, data.reply);
   } catch (_) { loader.remove(); addBotBubble(area, "Error."); }
@@ -220,12 +223,13 @@ function handleEvent(ev) {
 
     case "dm":
       if (activeView === "dm:" + ev.actor) {
-        addDMBubble(getArea(), ev.message, ev.actor, false);
+        addDMBubble(getArea(), ev.message, ev.actor, false, null, ev.files || []);
       } else {
         dmUnread[ev.actor] = (dmUnread[ev.actor] || 0) + 1;
         const b = document.getElementById("dm-badge-" + ev.actor);
         if (b) { b.textContent = dmUnread[ev.actor] > 9 ? "9+" : dmUnread[ev.actor]; b.style.display = "inline-flex"; }
-        showToast(`💬 ${ev.actor}: ${ev.message.slice(0, 60)}`);
+        const preview = ev.files && ev.files.length ? `📎 ${ev.files.length} archivo(s)` : ev.message.slice(0, 50);
+        showToast(`💬 ${ev.actor}: ${preview}`);
       }
       break;
 
@@ -241,7 +245,7 @@ function handleEvent(ev) {
     case "channel_message":
       if (ev.actor === username) break;
       if (activeView === "channel:" + ev.channel_id) {
-        addUserBubble(getArea(), ev.message, ev.actor);
+        addUserBubble(getArea(), ev.message, ev.actor, ev.files || []);
         if (ev.reply) addBotBubble(getArea(), ev.reply);
       } else {
         chUnread[ev.channel_id] = (chUnread[ev.channel_id] || 0) + 1;
