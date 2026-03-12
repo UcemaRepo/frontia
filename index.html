@@ -48,6 +48,29 @@
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/></svg>
         </button>
       </div>
+
+      <!-- Sheets connector -->
+      <div class="sheets-connector" id="sheetsConnector">
+        <div class="sheets-status disconnected" id="sheetsStatus">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
+          </svg>
+          <span id="sheetsStatusText">Sin hoja conectada</span>
+        </div>
+        <div class="sheets-actions" id="sheetsActions">
+          <button class="sheets-btn-connect" onclick="sheetsConnect()" id="sheetsConnectBtn">
+            Conectar Google Sheets
+          </button>
+          <div class="sheets-url-row" id="sheetsUrlRow" style="display:none">
+            <input type="text" id="sheetsUrlInput" class="text-input text-input-sm"
+              placeholder="URL o ID de la hoja…">
+            <button class="btn-primary btn-sm" onclick="sheetsLinkSheet()">Vincular</button>
+          </div>
+        </div>
+        <button class="sheets-disconnect-btn" id="sheetsDisconnectBtn" onclick="sheetsDisconnect()" style="display:none">
+          Desconectar
+        </button>
+      </div>
     </div>
 
     <!-- Sección: Usuarios -->
