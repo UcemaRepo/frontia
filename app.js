@@ -10,7 +10,8 @@ let mirrorTimer  = null;
 let dmUnread     = {};
 let chUnread     = {};  // { channel_id: count }
 let newChannelAI = true;  // toggle en modal de creación
-let lastActivity = Date.now();
+let lastActivity  = Date.now();
+let pendingFile   = null;  // { name, type, dataURL } — archivo listo para enviar
 
 if (!username) {
   username = prompt("Ingresá tu nombre de usuario");
@@ -60,13 +61,16 @@ msgInput.addEventListener("keydown", e => {
 });
 
 async function handleSend() {
-  const msg = msgInput.value.trim();
-  if (!msg) return;
+  const msg  = msgInput.value.trim();
+  const file = pendingFile;
+  if (!msg && !file) return;
   msgInput.value = "";
   msgInput.style.height = "auto";
-  if      (activeView === "personal")              await sendToAI(msg);
-  else if (activeView.startsWith("dm:"))           await sendDM(activeView.slice(3), msg);
-  else if (activeView.startsWith("channel:"))      await sendToChannel(activeView.slice(8), msg);
+  clearPendingFile();
+
+  if      (activeView === "personal")              await sendToAI(msg, file);
+  else if (activeView.startsWith("dm:"))           await sendDM(activeView.slice(3), msg, file);
+  else if (activeView.startsWith("channel:"))      await sendToChannel(activeView.slice(8), msg, file);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -94,12 +98,12 @@ async function renderPersonal() {
   } catch (_) {}
 }
 
-async function sendToAI(message) {
+async function sendToAI(message, file) {
   const area = getArea();
-  addUserBubble(area, message, username);
+  addUserBubble(area, message || "", username, file);
   const loader = addLoader(area);
   try {
-    const data = await apiFetch("/chat", "POST", { message, user: username, personality: getPersonality() });
+    const data = await apiFetch("/chat", "POST", { message: message || (file ? "[archivo: " + file.name + "]" : ""), user: username, personality: getPersonality() });
     loader.remove(); addBotBubble(area, data.reply);
   } catch (_) { loader.remove(); addBotBubble(area, "Error al conectar."); }
 }
@@ -145,10 +149,11 @@ async function renderDM(otherUser) {
   } catch (_) {}
 }
 
-async function sendDM(otherUser, message) {
-  addDMBubble(getArea(), message, username, true);
+async function sendDM(otherUser, message, file) {
+  const text = message || (file ? "[archivo: " + file.name + "]" : "");
+  addDMBubble(getArea(), text, username, true, null, file);
   try {
-    await apiFetch(`/dm/${otherUser}`, "POST", { from: username, message });
+    await apiFetch(`/dm/${otherUser}`, "POST", { from: username, message: text });
   } catch (_) { showToast("Error al enviar"); }
 }
 
@@ -177,13 +182,14 @@ async function renderChannel(channelId) {
   scrollBottom(area);
 }
 
-async function sendToChannel(channelId, message) {
+async function sendToChannel(channelId, message, file) {
   const area = getArea();
-  addUserBubble(area, message, username);
+  const text = message || (file ? "[archivo: " + file.name + "]" : "");
+  addUserBubble(area, text, username, file);
   const loader = addLoader(area);
   try {
     const data = await apiFetch(`/channels/${channelId}/chat`, "POST",
-      { message, user: username, personality: getPersonality() });
+      { message: text, user: username, personality: getPersonality() });
     loader.remove();
     if (data.reply) addBotBubble(area, data.reply);
   } catch (_) { loader.remove(); addBotBubble(area, "Error."); }
@@ -435,13 +441,21 @@ function closeExpandedView() {
 // ══════════════════════════════════════════════════════════════════════
 // RENDER — burbujas área principal
 // ══════════════════════════════════════════════════════════════════════
-function addUserBubble(container, text, actor) {
+function addUserBubble(container, text, actor, file) {
   const isMe = actor === username;
   const wrap = document.createElement("div");
   wrap.className = "msg-row " + (isMe ? "mine" : "theirs");
   if (!isMe) { const l = document.createElement("div"); l.className = "msg-actor"; l.textContent = actor; wrap.appendChild(l); }
-  const b = document.createElement("div"); b.className = "bubble user"; b.textContent = text;
-  wrap.appendChild(b); container.appendChild(wrap); scrollBottom(container);
+
+  if (file) {
+    const fb = buildFileBubble(file, isMe);
+    wrap.appendChild(fb);
+  }
+  if (text) {
+    const b = document.createElement("div"); b.className = "bubble user"; b.textContent = text;
+    wrap.appendChild(b);
+  }
+  container.appendChild(wrap); scrollBottom(container);
 }
 function addBotBubble(container, raw) {
   const wrap = document.createElement("div"); wrap.className = "msg-row bot-row";
@@ -488,6 +502,44 @@ function addDMBubble(container, text, from, isMe, ts) {
     container.appendChild(wrap);
   }
   scrollBottom(container);
+}
+
+// ── Burbuja de archivo ────────────────────────────────────────────────
+function buildFileBubble(file, isMe) {
+  const wrap = document.createElement("div");
+  wrap.className = "file-bubble " + (isMe ? "file-bubble-mine" : "file-bubble-theirs");
+
+  const isImage = file.type && file.type.startsWith("image/");
+
+  if (isImage && file.dataURL) {
+    const img = document.createElement("img");
+    img.src = file.dataURL;
+    img.className = "file-bubble-img";
+    img.onclick = () => window.open(file.dataURL, "_blank");
+    wrap.appendChild(img);
+  } else {
+    const ext = file.name.split(".").pop().toUpperCase();
+    wrap.innerHTML = `
+      <div class="file-bubble-doc">
+        <div class="file-bubble-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <div class="file-bubble-info">
+          <div class="file-bubble-name">${file.name}</div>
+          <div class="file-bubble-ext">${ext} · ${file.size ? (file.size/1024).toFixed(1)+" KB" : ""}</div>
+        </div>
+      </div>
+    `;
+  }
+  return wrap;
+}
+
+function clearPendingFile() {
+  pendingFile = null;
+  document.getElementById("fileName").textContent = "";
+  document.getElementById("fileUpload").value = "";
+  const preview = document.getElementById("filePreview");
+  if (preview) preview.remove();
 }
 
 // ── Rich content ────────────────────────────────────────────────────────
@@ -586,11 +638,44 @@ async function clearPersonality(){document.getElementById("customPersonality").v
 document.getElementById("personalityModal").addEventListener("click",function(e){if(e.target===this)closePersonalityModal();});
 
 async function uploadFile(){
-  const fi=document.getElementById("fileUpload"); if(!fi.files.length)return;
-  const fd=new FormData(); fd.append("file",fi.files[0]); fd.append("user",username);
-  const res=await fetch(API_URL+"/upload",{method:"POST",body:fd});
-  const fn=document.getElementById("fileName");
-  fn.textContent=res.ok?"📎 "+fi.files[0].name:""; if(!res.ok)alert("Tipo no soportado");
+  const fi = document.getElementById("fileUpload");
+  if (!fi.files.length) return;
+  const file = fi.files[0];
+
+  // Subir al backend
+  const fd = new FormData(); fd.append("file", file); fd.append("user", username);
+  const res = await fetch(API_URL + "/upload", { method:"POST", body:fd });
+  if (!res.ok) { alert("Tipo no soportado"); return; }
+
+  // Leer como dataURL para preview local
+  const dataURL = await new Promise(resolve => {
+    const r = new FileReader();
+    r.onload = e => resolve(e.target.result);
+    r.readAsDataURL(file);
+  });
+
+  pendingFile = { name: file.name, type: file.type, size: file.size, dataURL };
+
+  // Preview en el área de input
+  const existing = document.getElementById("filePreview");
+  if (existing) existing.remove();
+  const isImage = file.type.startsWith("image/");
+  const preview = document.createElement("div");
+  preview.id = "filePreview";
+  preview.className = "file-preview-bar";
+  preview.innerHTML = isImage
+    ? `<img src="${dataURL}" class="file-preview-thumb">
+       <span class="file-preview-name">${file.name}</span>
+       <button class="file-preview-rm" onclick="clearPendingFile()">
+         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+       </button>`
+    : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+       <span class="file-preview-name">${file.name}</span>
+       <button class="file-preview-rm" onclick="clearPendingFile()">
+         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+       </button>`;
+  document.querySelector(".input-area").insertBefore(preview, document.querySelector(".input-row"));
+  document.getElementById("fileName").textContent = "";
 }
 
 // ══════════════════════════════════════════════════════════════════════
