@@ -57,13 +57,10 @@
           </svg>
           <span id="sheetsStatusText">Sin hoja conectada</span>
         </div>
-        <div class="sheets-actions" id="sheetsActions">
-          <button class="sheets-btn-connect" onclick="sheetsConnect()" id="sheetsConnectBtn">
-            Conectar Google Sheets
-          </button>
-          <div class="sheets-url-row" id="sheetsUrlRow" style="display:none">
+        <div id="sheetsActions">
+          <div class="sheets-url-row" id="sheetsUrlRow">
             <input type="text" id="sheetsUrlInput" class="text-input text-input-sm"
-              placeholder="URL o ID de la hoja…">
+              placeholder="URL de Google Sheets…">
             <button class="btn-primary btn-sm" onclick="sheetsLinkSheet()">Vincular</button>
           </div>
         </div>
