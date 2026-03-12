@@ -62,11 +62,12 @@ msgInput.addEventListener("keydown", e => {
 
 async function handleSend() {
   const msg   = msgInput.value.trim();
-  const files = [...pendingFiles];
+  const files = pendingFiles.map(f => ({ ...f })); // copia profunda antes de limpiar
   if (!msg && !files.length) return;
+
   msgInput.value = "";
   msgInput.style.height = "auto";
-  clearPendingFiles();
+  clearPendingFiles(); // limpiar preview UI inmediatamente
 
   if      (activeView === "personal")              await sendToAI(msg, files);
   else if (activeView.startsWith("dm:"))           await sendDM(activeView.slice(3), msg, files);
@@ -473,20 +474,54 @@ function addLoader(container) {
   container.appendChild(d); scrollBottom(container); return d;
 }
 
-// ── Burbujas DM ────────────────────────────────────────────────────────
-function addDMBubble(container, text, from, isMe, ts) {
+// ── Burbuja de archivo ────────────────────────────────────────────────
+function buildFileBubble(file, isMe) {
+  const isImage = file.type && file.type.startsWith("image/");
+  const wrap = document.createElement("div");
+  wrap.className = "file-bubble " + (isMe ? "file-bubble-mine" : "file-bubble-theirs");
+
+  if (isImage && file.dataURL) {
+    const img = document.createElement("img");
+    img.src       = file.dataURL;
+    img.className = "file-bubble-img";
+    img.title     = file.name;
+    img.onclick   = () => window.open(file.dataURL, "_blank");
+    wrap.appendChild(img);
+  } else {
+    const ext = (file.name.split(".").pop() || "").toUpperCase();
+    const kb  = file.size ? (file.size / 1024).toFixed(1) + " KB" : "";
+    wrap.innerHTML = `
+      <div class="file-bubble-doc">
+        <div class="file-bubble-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+        </div>
+        <div class="file-bubble-info">
+          <div class="file-bubble-name">${file.name}</div>
+          <div class="file-bubble-ext">${ext}${kb ? " · " + kb : ""}</div>
+        </div>
+      </div>`;
+  }
+  return wrap;
+}
+
+// ── Burbujas DM (con archivos) ─────────────────────────────────────────
+function addDMBubble(container, text, from, isMe, ts, files) {
+  files = files || [];
   const now  = ts || Date.now() / 1000;
   const prev = container.lastElementChild;
-  const group = prev?.classList.contains("dm-group")
+  // Agrupar solo si mismo autor, menos de 2min, y no hay archivos nuevos
+  const group = !files.length
+             && prev?.classList.contains("dm-group")
              && prev?.dataset?.author === from
              && (now - parseFloat(prev.dataset.ts || 0)) < 120;
 
+  let inner;
+
   if (group) {
-    const inner  = prev.querySelector(".dm-group-inner");
-    const bubble = document.createElement("div");
-    bubble.className = `dm-bubble ${isMe ? "dm-bubble-mine" : "dm-bubble-theirs"} dm-stacked`;
-    bubble.textContent = text;
-    inner.appendChild(bubble);
+    inner = prev.querySelector(".dm-group-inner");
     prev.dataset.ts = now;
   } else {
     const wrap = document.createElement("div");
@@ -494,56 +529,45 @@ function addDMBubble(container, text, from, isMe, ts) {
     wrap.dataset.author = from;
     wrap.dataset.ts     = now;
 
-    if (!isMe) { const av = document.createElement("div"); av.className = "dm-avatar"; av.textContent = from[0].toUpperCase(); wrap.appendChild(av); }
+    if (!isMe) {
+      const av = document.createElement("div");
+      av.className = "dm-avatar"; av.textContent = from[0].toUpperCase();
+      wrap.appendChild(av);
+    }
 
-    const inner = document.createElement("div"); inner.className = "dm-group-inner";
-    if (!isMe) { const name = document.createElement("div"); name.className = "dm-sender"; name.textContent = from; inner.appendChild(name); }
+    inner = document.createElement("div");
+    inner.className = "dm-group-inner";
 
-    const bubble = document.createElement("div");
-    bubble.className = `dm-bubble ${isMe ? "dm-bubble-mine" : "dm-bubble-theirs"}`;
-    bubble.textContent = text;
-    inner.appendChild(bubble);
+    if (!isMe) {
+      const name = document.createElement("div");
+      name.className = "dm-sender"; name.textContent = from;
+      inner.appendChild(name);
+    }
+
     wrap.appendChild(inner);
     container.appendChild(wrap);
   }
-  scrollBottom(container);
-}
 
-// ── Burbuja de archivo ────────────────────────────────────────────────
-function buildFileBubble(file, isMe) {
-  const wrap = document.createElement("div");
-  wrap.className = "file-bubble " + (isMe ? "file-bubble-mine" : "file-bubble-theirs");
+  // Archivos primero
+  files.forEach(f => inner.appendChild(buildFileBubble(f, isMe)));
 
-  const isImage = file.type && file.type.startsWith("image/");
-
-  if (isImage && file.dataURL) {
-    const img = document.createElement("img");
-    img.src = file.dataURL;
-    img.className = "file-bubble-img";
-    img.onclick = () => window.open(file.dataURL, "_blank");
-    wrap.appendChild(img);
-  } else {
-    const ext = file.name.split(".").pop().toUpperCase();
-    wrap.innerHTML = `
-      <div class="file-bubble-doc">
-        <div class="file-bubble-icon">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        </div>
-        <div class="file-bubble-info">
-          <div class="file-bubble-name">${file.name}</div>
-          <div class="file-bubble-ext">${ext} · ${file.size ? (file.size/1024).toFixed(1)+" KB" : ""}</div>
-        </div>
-      </div>
-    `;
+  // Texto después (si hay)
+  if (text && text.trim()) {
+    const bubble = document.createElement("div");
+    bubble.className = `dm-bubble ${isMe ? "dm-bubble-mine" : "dm-bubble-theirs"}${group ? " dm-stacked" : ""}`;
+    bubble.textContent = text;
+    inner.appendChild(bubble);
   }
-  return wrap;
+
+  scrollBottom(container);
 }
 
 function clearPendingFiles() {
   pendingFiles = [];
-  document.getElementById("fileUpload").value = "";
+  const fi = document.getElementById("fileUpload");
+  if (fi) fi.value = "";
   const bar = document.getElementById("filePreviewBar");
-  if (bar) bar.innerHTML = "";
+  if (bar) { while (bar.firstChild) bar.removeChild(bar.firstChild); }
 }
 
 // ── Rich content ────────────────────────────────────────────────────────
@@ -641,55 +665,61 @@ async function savePersonality(){const custom=document.getElementById("customPer
 async function clearPersonality(){document.getElementById("customPersonality").value="";await apiFetch("/personality/"+username,"DELETE");}
 document.getElementById("personalityModal").addEventListener("click",function(e){if(e.target===this)closePersonalityModal();});
 
-async function uploadFile(){
+// Lee archivo localmente SIN llamar al backend todavía
+// El backend solo recibe el base64 cuando se envía el mensaje
+async function uploadFile() {
   const fi = document.getElementById("fileUpload");
   if (!fi.files.length) return;
 
   for (const file of fi.files) {
-    // Subir al backend
-    const fd = new FormData(); fd.append("file", file); fd.append("user", username);
-    const res = await fetch(API_URL + "/upload", { method:"POST", body:fd });
-    if (!res.ok) { showToast(`"${file.name}" no es un tipo soportado`); continue; }
-
-    // Leer como dataURL para preview y burbuja local
-    const dataURL = await new Promise(resolve => {
-      const r = new FileReader(); r.onload = e => resolve(e.target.result); r.readAsDataURL(file);
-    });
-
+    const dataURL = await readFileAsDataURL(file);
     const fileObj = { name: file.name, type: file.type, size: file.size, dataURL };
     pendingFiles.push(fileObj);
-    addFileChip(fileObj, pendingFiles.length - 1);
+    renderFileChip(fileObj);
   }
   fi.value = "";
 }
 
-function addFileChip(fileObj, idx) {
-  const bar = document.getElementById("filePreviewBar");
-  const isImage = fileObj.type.startsWith("image/");
-  const chip = document.createElement("div");
-  chip.className = "file-chip";
-  chip.dataset.idx = idx;
-  chip.innerHTML = isImage
-    ? `<img src="${fileObj.dataURL}" class="file-chip-thumb">`
-    : `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
-  chip.innerHTML += `<span class="file-chip-name">${fileObj.name}</span>
-    <button class="file-chip-rm" onclick="removeFileChip(${idx})">
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>`;
-  bar.appendChild(chip);
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = e => resolve(e.target.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
 }
 
-function removeFileChip(idx) {
-  pendingFiles[idx] = null;
-  const bar = document.getElementById("filePreviewBar");
-  const chip = bar.querySelector(`[data-idx="${idx}"]`);
-  if (chip) chip.remove();
-  pendingFiles = pendingFiles.filter(Boolean);
-  // re-index
-  bar.querySelectorAll(".file-chip").forEach((c, i) => {
-    c.dataset.idx = i;
-    c.querySelector(".file-chip-rm").setAttribute("onclick", `removeFileChip(${i})`);
-  });
+function renderFileChip(fileObj) {
+  const bar     = document.getElementById("filePreviewBar");
+  const isImage = fileObj.type && fileObj.type.startsWith("image/");
+  const chip    = document.createElement("div");
+  chip.className = "file-chip";
+
+  // Thumbnail o ícono
+  if (isImage) {
+    const img = document.createElement("img");
+    img.src = fileObj.dataURL; img.className = "file-chip-thumb";
+    chip.appendChild(img);
+  } else {
+    const ico = document.createElement("span"); ico.className = "file-chip-ico";
+    ico.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+    chip.appendChild(ico);
+  }
+
+  // Nombre
+  const nm = document.createElement("span"); nm.className = "file-chip-name"; nm.textContent = fileObj.name;
+  chip.appendChild(nm);
+
+  // Botón eliminar
+  const rm = document.createElement("button"); rm.className = "file-chip-rm"; rm.type = "button";
+  rm.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+  rm.onclick = () => {
+    const idx = pendingFiles.indexOf(fileObj);
+    if (idx !== -1) pendingFiles.splice(idx, 1);
+    chip.remove();
+  };
+  chip.appendChild(rm);
+  bar.appendChild(chip);
 }
 
 // ══════════════════════════════════════════════════════════════════════
