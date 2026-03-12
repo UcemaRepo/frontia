@@ -21,6 +21,7 @@ if (!username) {
 document.getElementById("username").textContent = username;
 
 // ── Arranque ────────────────────────────────────────────────────────────
+const msgInput = document.getElementById("messageInput");
 sendHeartbeat();
 setInterval(sendHeartbeat, 20000);
 setInterval(loadUsers,     5000);
@@ -52,7 +53,6 @@ async function sendHeartbeat() {
 }
 
 // ── Input ───────────────────────────────────────────────────────────────
-const msgInput = document.getElementById("messageInput");
 msgInput.addEventListener("input", function () {
   this.style.height = "auto";
   this.style.height = Math.min(this.scrollHeight, 120) + "px";
