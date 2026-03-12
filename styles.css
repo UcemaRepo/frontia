@@ -791,3 +791,114 @@ body {
   box-shadow: 0 1px 3px rgba(0,0,0,0.3);
 }
 .ai-toggle-btn.active .ai-toggle-thumb { left: 21px; }
+
+/* ══════════════════════════════════════════════
+   BURBUJAS DE ARCHIVO
+══════════════════════════════════════════════ */
+
+/* Preview en el input antes de enviar */
+.file-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  margin-bottom: 8px;
+  animation: fadeUp 0.15s ease;
+}
+.file-preview-thumb {
+  width: 40px; height: 40px;
+  object-fit: cover;
+  border-radius: 5px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.file-preview-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-preview-rm {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 4px;
+  display: flex; align-items: center;
+  flex-shrink: 0;
+  transition: all 0.12s;
+}
+.file-preview-rm:hover { color: var(--danger); background: rgba(255,92,108,0.1); }
+
+/* Burbuja de archivo en el chat */
+.file-bubble {
+  max-width: 260px;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 3px;
+  cursor: default;
+}
+.file-bubble-mine   { align-self: flex-end; }
+.file-bubble-theirs { align-self: flex-start; }
+
+/* Imagen */
+.file-bubble-img {
+  width: 100%;
+  max-width: 260px;
+  max-height: 200px;
+  object-fit: cover;
+  display: block;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.file-bubble-img:hover { opacity: 0.9; }
+
+/* Documento */
+.file-bubble-doc {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+.file-bubble-mine .file-bubble-doc {
+  background: rgba(255,255,255,0.15);
+  border-color: rgba(255,255,255,0.2);
+}
+.file-bubble-theirs .file-bubble-doc {
+  background: var(--surface2);
+}
+.file-bubble-icon {
+  width: 36px; height: 36px;
+  background: rgba(79,124,255,0.15);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.file-bubble-mine .file-bubble-icon {
+  background: rgba(255,255,255,0.2);
+  color: white;
+}
+.file-bubble-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.file-bubble-name {
+  font-size: 12px; font-weight: 500;
+  color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 160px;
+}
+.file-bubble-mine .file-bubble-name { color: white; }
+.file-bubble-ext { font-size: 10px; color: var(--text-muted); }
+.file-bubble-mine .file-bubble-ext { color: rgba(255,255,255,0.65); }
+
+/* En DM, la burbuja de archivo va dentro del grupo */
+.dm-group-mine .file-bubble   { align-self: flex-end; }
+.dm-group-theirs .file-bubble { align-self: flex-start; }
