@@ -8,6 +8,8 @@ let mirrorUser   = null;
 let mirrorCount  = 0;
 let mirrorTimer  = null;
 let dmUnread     = {};
+let chUnread     = {};  // { channel_id: count }
+let newChannelAI = true;  // toggle en modal de creación
 let lastActivity = Date.now();
 
 if (!username) {
@@ -154,6 +156,7 @@ async function sendDM(otherUser, message) {
 async function renderChannel(channelId) {
   activeView = "channel:" + channelId;
   setNavActive("nav-ch-" + channelId);
+  chUnread[channelId] = 0;
   const badge = document.getElementById("ch-badge-" + channelId);
   if (badge) { badge.style.display = "none"; badge.dataset.n = 0; }
 
@@ -170,7 +173,7 @@ async function renderChannel(channelId) {
   msgInput.placeholder = `Escribir en #${ch.name}...`;
   const area = getArea();
   area.innerHTML = "";
-  (ch.messages || []).forEach(m => { addUserBubble(area, m.message, m.actor); addBotBubble(area, m.reply); });
+  (ch.messages || []).forEach(m => { addUserBubble(area, m.message, m.actor); if (m.reply) addBotBubble(area, m.reply); });
   scrollBottom(area);
 }
 
@@ -181,7 +184,8 @@ async function sendToChannel(channelId, message) {
   try {
     const data = await apiFetch(`/channels/${channelId}/chat`, "POST",
       { message, user: username, personality: getPersonality() });
-    loader.remove(); addBotBubble(area, data.reply);
+    loader.remove();
+    if (data.reply) addBotBubble(area, data.reply);
   } catch (_) { loader.remove(); addBotBubble(area, "Error."); }
 }
 
@@ -230,10 +234,11 @@ function handleEvent(ev) {
       if (ev.actor === username) break;
       if (activeView === "channel:" + ev.channel_id) {
         addUserBubble(getArea(), ev.message, ev.actor);
-        addBotBubble(getArea(), ev.reply);
+        if (ev.reply) addBotBubble(getArea(), ev.reply);
       } else {
+        chUnread[ev.channel_id] = (chUnread[ev.channel_id] || 0) + 1;
         const b = document.getElementById("ch-badge-" + ev.channel_id);
-        if (b) { const n = (parseInt(b.dataset.n || 0) + 1); b.textContent = n > 9 ? "9+" : n; b.dataset.n = n; b.style.display = "inline-flex"; }
+        if (b) { const n = chUnread[ev.channel_id]; b.textContent = n > 9 ? "9+" : n; b.dataset.n = n; b.style.display = "inline-flex"; }
       }
       break;
 
@@ -264,10 +269,14 @@ function makeUserCard(u) {
   el.id        = "nav-user-" + u.name;
   el.className = "sidebar-item user-item" + (activeView === "dm:" + u.name ? " active" : "");
   el.onclick   = () => renderDM(u.name);
+  // Preservar badge count acumulado si existe
+  const savedCount = dmUnread[u.name] || 0;
+  const badgeStyle = savedCount > 0 ? "inline-flex" : "none";
+  const badgeText  = savedCount > 9 ? "9+" : (savedCount || "");
   el.innerHTML = `
     <span class="status-dot ${u.status}"></span>
     <span class="item-label">${u.name}</span>
-    <span class="dm-unread" id="dm-badge-${u.name}" style="display:none"></span>
+    <span class="dm-unread" id="dm-badge-${u.name}" style="display:${badgeStyle}">${badgeText}</span>
     <div class="user-item-actions">
       <button class="user-action-btn dm-btn" title="Mensaje directo" onclick="event.stopPropagation();renderDM('${u.name}')">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -298,7 +307,9 @@ async function loadChannels() {
       el.innerHTML = `
         <span class="channel-hash-sm">#</span>
         <span class="item-label">${ch.name}</span>
-        <span class="channel-badge" id="ch-badge-${id}" style="display:none"></span>
+        <span class="channel-badge" id="ch-badge-${id}"
+          style="display:${chUnread[id]>0?'inline-flex':'none'}"
+          data-n="${chUnread[id]||0}">${chUnread[id]>9?'9+':(chUnread[id]||'')} </span>
         ${ch.creator === username
           ? `<button class="item-action danger" title="Borrar" onclick="event.stopPropagation();deleteChannel('${id}')">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H5L4,6"/></svg>
@@ -531,13 +542,27 @@ function buildDownload(filename, content) {
 // ══════════════════════════════════════════════════════════════════════
 // MODALES
 // ══════════════════════════════════════════════════════════════════════
-function openCreateChannelModal() { document.getElementById("createChannelModal").classList.add("open"); setTimeout(()=>document.getElementById("channelNameInput").focus(),50); }
-function closeCreateChannelModal() { document.getElementById("createChannelModal").classList.remove("open"); document.getElementById("channelNameInput").value=""; }
+function openCreateChannelModal() {
+  newChannelAI = true;
+  const btn = document.getElementById("aiToggleBtn");
+  if (btn) btn.classList.add("active");
+  document.getElementById("createChannelModal").classList.add("open");
+  setTimeout(()=>document.getElementById("channelNameInput").focus(),50);
+}
+function closeCreateChannelModal() {
+  document.getElementById("createChannelModal").classList.remove("open");
+  document.getElementById("channelNameInput").value="";
+}
+function toggleAI() {
+  newChannelAI = !newChannelAI;
+  const btn = document.getElementById("aiToggleBtn");
+  if (btn) btn.classList.toggle("active", newChannelAI);
+}
 async function createChannel() {
   const name = document.getElementById("channelNameInput").value.trim();
   if (!name) return;
   try {
-    const data = await apiFetch("/channels","POST",{user:username,name});
+    const data = await apiFetch("/channels","POST",{user:username,name,ai_enabled:newChannelAI});
     if (data.error){alert(data.error);return;}
     closeCreateChannelModal(); await loadChannels(); renderChannel(data.id);
   } catch(_){alert("Error al crear el canal");}
