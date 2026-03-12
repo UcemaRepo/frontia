@@ -762,49 +762,75 @@ function renderFileChip(fileObj) {
 // GOOGLE SHEETS
 // ══════════════════════════════════════════════════════════════════════
 
+// ── Multi-sheet library ────────────────────────────────────────────────────
+let sheetsLibrary = [];   // [{ id, name, tab }]
+let sheetsActive  = [];   // [id, ...]
+
 async function sheetsLoadStatus() {
   try {
-    const data        = await apiFetch(`/sheets/status?user=${encodeURIComponent(username)}`);
-    const statusEl    = document.getElementById("sheetsStatus");
-    const statusText  = document.getElementById("sheetsStatusText");
-    const urlRow      = document.getElementById("sheetsUrlRow");
-    const disconnectBtn = document.getElementById("sheetsDisconnectBtn");
-    if (!statusEl) return;
-
-    if (data.connected) {
-      statusEl.className      = "sheets-status connected";
-      statusText.textContent  = `📊 ${data.sheet_name}`;
-      if (urlRow)       urlRow.style.display       = "none";
-      if (disconnectBtn) disconnectBtn.style.display = "block";
-    } else {
-      statusEl.className      = "sheets-status disconnected";
-      statusText.textContent  = "Sin hoja conectada";
-      if (urlRow)       urlRow.style.display       = "flex";
-      if (disconnectBtn) disconnectBtn.style.display = "none";
-    }
+    const data = await apiFetch(`/sheets/library?user=${encodeURIComponent(username)}`);
+    sheetsLibrary = data.library || [];
+    sheetsActive  = data.active  || [];
+    renderSheetsLibrary();
   } catch (_) {}
 }
 
-async function sheetsLinkSheet() {
+function renderSheetsLibrary() {
+  const list = document.getElementById("sheetsLibraryList");
+  if (!list) return;
+  list.innerHTML = "";
+
+  if (!sheetsLibrary.length) {
+    list.innerHTML = `<div class="sheets-empty-hint">Sin hojas vinculadas</div>`;
+    return;
+  }
+
+  sheetsLibrary.forEach(sheet => {
+    const isActive = sheetsActive.includes(sheet.id);
+    const row = document.createElement("div");
+    row.className = "sheets-library-row" + (isActive ? " active" : "");
+    row.innerHTML = `
+      <label class="sheets-library-check">
+        <input type="checkbox" ${isActive ? "checked" : ""}
+          onchange="sheetsToggleActive('${sheet.id}', this.checked)">
+        <span class="sheets-library-name" title="${sheet.name}">📊 ${sheet.name}</span>
+      </label>
+      <button class="sheets-remove-btn" onclick="sheetsRemove('${sheet.id}')" title="Quitar">×</button>
+    `;
+    list.appendChild(row);
+  });
+}
+
+async function sheetsToggleActive(sheetId, checked) {
+  if (checked && !sheetsActive.includes(sheetId)) {
+    sheetsActive.push(sheetId);
+  } else if (!checked) {
+    sheetsActive = sheetsActive.filter(id => id !== sheetId);
+  }
+  await apiFetch("/sheets/set-active", "POST", { user: username, active: sheetsActive });
+  renderSheetsLibrary();
+}
+
+async function sheetsAddSheet() {
   const input = document.getElementById("sheetsUrlInput");
   const val   = input?.value.trim();
   if (!val) return;
   try {
-    const data = await apiFetch("/sheets/connect-sheet", "POST", {
-      user: username, sheet_url_or_id: val
-    });
+    showToast("⏳ Vinculando hoja…");
+    const data = await apiFetch("/sheets/add", "POST", { user: username, sheet_url_or_id: val });
     if (data.error) { showToast("❌ " + data.error); return; }
     if (input) input.value = "";
-    showToast(`✅ Hoja "${data.sheet_name}" vinculada`);
+    showToast(`✅ "${data.sheet_name}" agregada`);
     sheetsLoadStatus();
   } catch (_) { showToast("❌ No se pudo vincular la hoja"); }
 }
 
-async function sheetsDisconnect() {
-  if (!confirm("¿Desconectar tu hoja de Google Sheets?")) return;
-  await apiFetch("/sheets/disconnect", "POST", { user: username });
+async function sheetsRemove(sheetId) {
+  const sheet = sheetsLibrary.find(s => s.id === sheetId);
+  if (!confirm(`¿Quitar "${sheet?.name || 'esta hoja'}" de tu biblioteca?`)) return;
+  await apiFetch("/sheets/remove", "POST", { user: username, sheet_id: sheetId });
   sheetsLoadStatus();
-  showToast("Hoja desconectada");
+  showToast("Hoja quitada");
 }
 
 // ══════════════════════════════════════════════════════════════════════
