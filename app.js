@@ -63,7 +63,7 @@ msgInput.addEventListener("keydown", e => {
 async function handleSend() {
   const msg   = msgInput.value.trim();
   const files = pendingFiles.map(f => ({ ...f })); // copia profunda antes de limpiar
-  if (!msg && !files.length) return;
+  if (!msg && !files.length) return; // necesita al menos texto o archivo
 
   msgInput.value = "";
   msgInput.style.height = "auto";
@@ -485,7 +485,7 @@ function buildFileBubble(file, isMe) {
     img.src       = file.dataURL;
     img.className = "file-bubble-img";
     img.title     = file.name;
-    img.onclick   = () => window.open(file.dataURL, "_blank");
+    img.onclick   = () => openLightbox(file.dataURL, file.name);
     wrap.appendChild(img);
   } else {
     const ext = (file.name.split(".").pop() || "").toUpperCase();
@@ -720,6 +720,51 @@ function renderFileChip(fileObj) {
   };
   chip.appendChild(rm);
   bar.appendChild(chip);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// LIGHTBOX
+// ══════════════════════════════════════════════════════════════════════
+function openLightbox(src, name) {
+  const existing = document.getElementById("lightboxOverlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "lightboxOverlay";
+  overlay.className = "lightbox-overlay";
+  overlay.innerHTML = `
+    <div class="lightbox-panel">
+      <div class="lightbox-header">
+        <span class="lightbox-name">${name || ""}</span>
+        <div style="display:flex;gap:6px">
+          <a class="btn-ghost-sm" href="${src}" download="${name || "imagen"}" title="Descargar">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </a>
+          <button class="btn-ghost-sm" onclick="closeLightbox()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="lightbox-body">
+        <img src="${src}" class="lightbox-img" alt="${name || ""}">
+      </div>
+    </div>
+  `;
+  overlay.addEventListener("click", e => { if (e.target === overlay) closeLightbox(); });
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add("open"));
+
+  // Cerrar con Escape
+  overlay._keydown = e => { if (e.key === "Escape") closeLightbox(); };
+  document.addEventListener("keydown", overlay._keydown);
+}
+
+function closeLightbox() {
+  const el = document.getElementById("lightboxOverlay");
+  if (!el) return;
+  document.removeEventListener("keydown", el._keydown);
+  el.classList.remove("open");
+  setTimeout(() => el.remove(), 180);
 }
 
 // ══════════════════════════════════════════════════════════════════════
